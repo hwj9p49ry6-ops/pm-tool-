@@ -1,0 +1,10 @@
+pm.db
+*.db
+__pycache__/
+*.pyc
+*.pyo
+.env
+.DS_Store
+venv/
+env/
+*.egg-info/
