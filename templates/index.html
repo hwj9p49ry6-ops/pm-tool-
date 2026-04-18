@@ -245,6 +245,25 @@
   /* ── Critical path ── */
   .gantt-critical { filter: drop-shadow(0 0 4px rgba(239,68,68,.8)); }
 
+  /* ── AI Chat panel ── */
+  #ai-chat-panel { position:fixed; right:0; top:52px; bottom:0; width:380px; background:#fff; border-left:1px solid var(--border); box-shadow:-4px 0 20px rgba(0,0,0,.1); z-index:150; display:flex; flex-direction:column; transform:translateX(100%); transition:transform .2s ease; }
+  #ai-chat-panel.open { transform:translateX(0); }
+  #ai-chat-header { padding:14px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+  #ai-chat-header span { font-size:14px; font-weight:700; }
+  #ai-chat-close { background:none; border:none; font-size:18px; cursor:pointer; color:var(--text-light); }
+  #ai-chat-messages { flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .chat-msg-user { align-self:flex-end; background:var(--accent); color:#fff; border-radius:12px 12px 2px 12px; padding:9px 13px; max-width:88%; font-size:13px; line-height:1.5; word-break:break-word; }
+  .chat-msg-ai { align-self:flex-start; background:#f0f2f5; color:var(--text); border-radius:12px 12px 12px 2px; padding:9px 13px; max-width:88%; font-size:13px; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
+  .chat-msg-ai.pending { opacity:0.55; font-style:italic; }
+  .chat-action-pill { display:inline-block; margin-top:6px; background:#e0f0ff; color:#1a5fa8; border-radius:20px; font-size:11px; padding:2px 9px; }
+  #ai-chat-suggestions { padding:8px 14px; display:flex; flex-wrap:wrap; gap:6px; flex-shrink:0; border-bottom:1px solid var(--border); }
+  .ai-chip { font-size:11px; padding:4px 10px; border-radius:20px; border:1px solid var(--border); background:#fff; cursor:pointer; color:var(--text-light); white-space:nowrap; }
+  .ai-chip:hover { background:var(--row-hover); border-color:var(--accent); color:var(--accent); }
+  #ai-chat-input-area { padding:12px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:8px; flex-shrink:0; }
+  #ai-chat-input { width:100%; font-size:13px; padding:8px 10px; border:1px solid var(--border); border-radius:6px; resize:none; font-family:var(--font); outline:none; min-height:56px; }
+  #ai-chat-input:focus { border-color:var(--accent); }
+  #ai-chat-send { align-self:flex-end; }
+
   /* ── Stats bar toolbar buttons ── */
   .stats-tool-btn { font-size:11px; padding:3px 7px; height:24px; line-height:1; white-space:nowrap; }
 
@@ -546,6 +565,7 @@
         <button class="tab" id="tab-kanban" onclick="switchView('kanban')">🗂 Kanban</button>
         <button class="tab" id="tab-report" onclick="openReportModal()">📄 Report</button>
         <button class="tab" id="tab-ai" onclick="openAIModal()" title="Build schedule from description">✨ AI Schedule</button>
+        <button class="tab" id="tab-ai-chat" onclick="openAIChat()" title="AI project assistant">🤖 Assistant</button>
         <button class="tab" onclick="openShareModal()" title="Share this project" style="margin-left:auto;">👥 Share</button>
       </div>
     </div>
@@ -2116,7 +2136,9 @@ function buildGanttSVG() {
     if (!t.start_date || (!t.end_date && !isMilestone)) return;
     const sd = strToDate(t.start_date);
     if (!sd) return;
-    const color = criticalIds.has(t.id) ? '#ef4444' : getTaskColor(t);
+    const color = criticalIds.has(t.id) ? '#ef4444'
+                : _aiHighlightIds.has(t.id) ? '#f59e0b'
+                : getTaskColor(t);
     const xOff = Math.max(0, daysBetween(start, sd));
 
     if (isMilestone) {
@@ -3725,6 +3747,136 @@ function toggleCriticalPath() {
 }
 
 // ═══════════════════════════════════════════════════════════
+// AI CHAT ASSISTANT
+// ═══════════════════════════════════════════════════════════
+
+let _aiChatHistory = [];   // [{role:'user'|'assistant', content:'...'}]
+let _aiHighlightIds = new Set();  // task IDs to highlight from AI (non-critical-path)
+
+function openAIChat() {
+  if (!state.activeProjectId) { showToast('Select a project first'); return; }
+  document.getElementById('ai-chat-panel').classList.add('open');
+  document.getElementById('ai-chat-input').focus();
+}
+
+function closeAIChat() {
+  document.getElementById('ai-chat-panel').classList.remove('open');
+}
+
+function _appendChatMessage(role, text, pending) {
+  const wrap = document.getElementById('ai-chat-messages');
+  const el = document.createElement('div');
+  el.className = `chat-msg-${role}` + (pending ? ' pending' : '');
+  el.textContent = text;
+  wrap.appendChild(el);
+  wrap.scrollTop = wrap.scrollHeight;
+  return el;
+}
+
+function sendAISuggestion(text) {
+  document.getElementById('ai-chat-input').value = text;
+  sendAIChat();
+}
+
+async function sendAIChat() {
+  const input = document.getElementById('ai-chat-input');
+  const msg = input.value.trim();
+  if (!msg || !state.activeProjectId) return;
+  input.value = '';
+  input.style.height = '';
+
+  _appendChatMessage('user', msg);
+  const pendingEl = _appendChatMessage('ai', '⏳ Thinking…', true);
+
+  _aiChatHistory.push({role: 'user', content: msg});
+
+  let res;
+  try {
+    res = await api.post(`/api/projects/${state.activeProjectId}/ai-chat`, {
+      message: msg,
+      history: _aiChatHistory.slice(-10),
+      tasks: state.tasks,
+    });
+  } catch(e) {
+    pendingEl.remove();
+    _appendChatMessage('ai', '❌ Network error — is the server running?');
+    return;
+  }
+
+  pendingEl.remove();
+
+  if (res.error) {
+    _appendChatMessage('ai', `❌ ${res.error}`);
+    return;
+  }
+
+  const aiEl = _appendChatMessage('ai', res.message || '(no response)');
+  _aiChatHistory.push({role: 'assistant', content: res.message || ''});
+
+  // Execute actions and show pills
+  const actions = res.actions || [];
+  for (const action of actions) {
+    const label = await _executeAIAction(action);
+    if (label) {
+      const pill = document.createElement('span');
+      pill.className = 'chat-action-pill';
+      pill.textContent = label;
+      aiEl.appendChild(document.createElement('br'));
+      aiEl.appendChild(pill);
+    }
+  }
+
+  if (actions.length) renderAll();
+}
+
+async function _executeAIAction(action) {
+  try {
+    if (action.type === 'show_critical_path') {
+      state.showCriticalPath = true;
+      _aiHighlightIds = new Set();
+      if (state.activeView !== 'gantt') switchView('gantt');
+      return '📍 Critical path highlighted in Gantt';
+    }
+
+    if (action.type === 'highlight_tasks') {
+      _aiHighlightIds = new Set((action.ids || []).map(Number));
+      if (state.activeView !== 'gantt') switchView('gantt');
+      return `🎯 Highlighted ${_aiHighlightIds.size} task(s) in Gantt`;
+    }
+
+    if (action.type === 'add_task') {
+      const task = await api.post(`/api/projects/${state.activeProjectId}/tasks`, action.task || {});
+      if (task && task.id) {
+        state.tasks.push(task);
+        showToast(`Added: ${task.name}`);
+        return `✅ Added task: ${task.name}`;
+      }
+    }
+
+    if (action.type === 'update_task') {
+      const task = await api.put(`/api/tasks/${action.id}`, action.fields || {});
+      if (task && task.id) {
+        const i = state.tasks.findIndex(t => t.id === action.id);
+        if (i >= 0) state.tasks[i] = task;
+        showToast(`Updated: ${task.name}`);
+        return `✏️ Updated: ${task.name}`;
+      }
+    }
+
+    if (action.type === 'delete_task') {
+      await api.del(`/api/tasks/${action.id}`);
+      const t = state.tasks.find(t => t.id === action.id);
+      state.tasks = state.tasks.filter(t => t.id !== action.id);
+      showToast('Task deleted');
+      return `🗑 Deleted task${t ? ': ' + t.name : ''}`;
+    }
+  } catch(e) {
+    console.error('AI action failed', action, e);
+  }
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════
 // GANTT: BASELINE
 // ═══════════════════════════════════════════════════════════
 
@@ -4413,6 +4565,29 @@ async function maybeCheckAuth() {
   </div>
 </div>
 
+
+
+<!-- AI Chat Panel -->
+<div id="ai-chat-panel">
+  <div id="ai-chat-header">
+    <span>🤖 AI Assistant</span>
+    <button id="ai-chat-close" onclick="closeAIChat()">×</button>
+  </div>
+  <div id="ai-chat-messages"></div>
+  <div id="ai-chat-suggestions">
+    <button class="ai-chip" onclick="sendAISuggestion('What is the critical path?')">Critical path</button>
+    <button class="ai-chip" onclick="sendAISuggestion('Who owns the most tasks?')">Task owners</button>
+    <button class="ai-chip" onclick="sendAISuggestion('What tasks are overdue?')">Overdue tasks</button>
+    <button class="ai-chip" onclick="sendAISuggestion('Summarize project status')">Status summary</button>
+    <button class="ai-chip" onclick="sendAISuggestion('What are the upcoming milestones?')">Milestones</button>
+  </div>
+  <div id="ai-chat-input-area">
+    <textarea id="ai-chat-input" rows="2"
+      placeholder="Ask anything or say 'Add a dependency from X to Y'…"
+      onkeydown="if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){sendAIChat();}"></textarea>
+    <button id="ai-chat-send" class="btn btn-primary" onclick="sendAIChat()">Send ↵</button>
+  </div>
+</div>
 
 </body>
 </html>

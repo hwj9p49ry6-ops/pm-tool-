@@ -8,9 +8,22 @@ import secrets
 
 from flask import Flask, jsonify, request, render_template, g, send_file
 
+# Ensure we can find db.py and integrations when run from any cwd
+_HERE = os.path.dirname(__file__)
+_ROOT = os.path.abspath(os.path.join(_HERE, '..', '..'))
+sys.path.insert(0, _HERE)
+sys.path.insert(0, _ROOT)
+from db import init_db, get_db
+
+# Use Apple corporate CA bundle so Floodgate SSL works off-VPN
+_APPLE_CA = os.path.expanduser('~/.claude/apple/certs/bundle.pem')
+if os.path.exists(_APPLE_CA) and not os.environ.get('REQUESTS_CA_BUNDLE'):
+    os.environ['REQUESTS_CA_BUNDLE'] = _APPLE_CA
+    os.environ['SSL_CERT_FILE'] = _APPLE_CA
+
 app = Flask(__name__, template_folder='templates')
-app.config['DATABASE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pm.db')
-app.secret_key = 'dev-secret-key'
+app.config['DATABASE'] = os.path.join(os.path.dirname(__file__), 'pm.db')
+app.secret_key = os.environ.get('PM_SECRET_KEY', 'dev-secret-key-change-in-production')
 
 
 @app.teardown_appcontext
@@ -1354,6 +1367,144 @@ Rules:
         return msg.content[0].text
     except Exception as e:
         return {'error': f'LLM unavailable. Floodgate: {fg_msg[:80]}. Anthropic: {e}.'}
+
+
+
+
+# ── AI Chat ───────────────────────────────────────────────────────────────────
+
+def _build_chat_system(tasks):
+    """Build system prompt for the AI assistant with full project context."""
+    # Slim down tasks to what matters for reasoning
+    slim = [
+        {k: t.get(k, '') for k in ['id', 'name', 'owner', 'status', 'priority',
+                                    'start_date', 'end_date', 'duration',
+                                    'depends_on', 'pct_complete', 'notes', 'parent_id']}
+        for t in tasks
+    ]
+    task_json = json.dumps(slim, indent=2)
+    return f"""You are an AI project management assistant embedded in a project scheduling tool.
+You have full access to the current project schedule shown below.
+
+CURRENT TASKS (JSON):
+{task_json}
+
+You can BOTH answer questions AND make changes to the schedule.
+
+Always respond with ONLY valid JSON — no markdown, no extra text:
+{{
+  "message": "Your natural language response to the user",
+  "actions": []
+}}
+
+Available action types for the actions array:
+
+1. Add a new task:
+   {{"type":"add_task","task":{{"name":"...","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","owner":"","priority":"Medium","status":"Not Started","depends_on":"","notes":""}}}}
+
+2. Update an existing task (use the real task id from the tasks list above):
+   {{"type":"update_task","id":123,"fields":{{"name":"...","depends_on":"5FS","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","owner":"","status":"","priority":""}}}}
+
+3. Delete a task:
+   {{"type":"delete_task","id":123}}
+
+4. Show critical path highlighted in the Gantt chart:
+   {{"type":"show_critical_path"}}
+
+5. Highlight specific tasks in the Gantt chart:
+   {{"type":"highlight_tasks","ids":[1,2,3]}}
+
+Rules:
+- depends_on format: comma-separated predecessor task IDs with type suffix, e.g. "3FS" or "1FS,4SS+2d"
+  FS=Finish-to-Start, SS=Start-to-Start, FF=Finish-to-Finish. Lag: +Nd or +Nw
+- Dates must be YYYY-MM-DD
+- Only add actions when the user explicitly asks to make a change or highlight something
+- For pure questions (who owns X, what is the status of Y), just answer in message with empty actions
+- When asked about the critical path, ALWAYS include {{"type":"show_critical_path"}} in actions
+- Reference tasks by their actual id numbers from the task list above
+"""
+
+
+def _call_llm_for_chat(system, messages):
+    """Call Claude for multi-turn project assistant chat. Reuses Floodgate→Anthropic pattern."""
+    # Try Floodgate (internal Apple gateway)
+    try:
+        sys.path.insert(0, _ROOT)
+        from integrations.floodgate.floodgate import FloodgateClient
+        client = FloodgateClient(model='sonnet')
+        result = client.call(
+            system=system,
+            messages=messages,
+            max_tokens=2048
+        )
+        return result
+    except Exception as fg_err:
+        fg_msg = str(fg_err)
+
+    # Fallback: Anthropic SDK or Apple proxy
+    try:
+        import anthropic
+        import subprocess as _sp
+        base_url = os.environ.get('ANTHROPIC_BASE_URL', 'https://api.anthropic.com')
+        api_key  = os.environ.get('ANTHROPIC_API_KEY', '')
+        if not api_key and 'localhost' in base_url:
+            _tok_script = os.path.expanduser('~/.claude/apple/get-apple-token.sh')
+            if os.path.exists(_tok_script):
+                try:
+                    _tok = _sp.run(['bash', _tok_script], capture_output=True, text=True, timeout=10)
+                    api_key = _tok.stdout.strip() or 'no-key'
+                except Exception:
+                    api_key = 'no-key'
+        if not api_key:
+            api_key = 'no-key'
+        client = anthropic.Anthropic(base_url=base_url, api_key=api_key)
+        msg = client.messages.create(
+            model='claude-sonnet-4-6',
+            max_tokens=2048,
+            system=system,
+            messages=messages
+        )
+        return msg.content[0].text
+    except Exception as e:
+        return {'error': f'AI unavailable. Floodgate: {fg_msg[:80]}. Anthropic: {e}.'}
+
+
+@app.route('/api/projects/<int:pid>/ai-chat', methods=['POST'])
+def ai_chat(pid):
+    """Multi-turn AI project assistant. Answers questions and makes schedule changes."""
+    db = _get_db()
+    if not db.execute("SELECT id FROM projects WHERE id=?", (pid,)).fetchone():
+        return jsonify({'error': 'Project not found'}), 404
+
+    data    = request.get_json() or {}
+    message = data.get('message', '').strip()
+    history = data.get('history', [])   # [{role, content}, ...]
+    tasks   = data.get('tasks', [])     # full task list from frontend state
+
+    if not message:
+        return jsonify({'error': 'No message provided'}), 400
+
+    system   = _build_chat_system(tasks)
+    messages = history[-10:] + [{'role': 'user', 'content': message}]
+
+    response_text = _call_llm_for_chat(system, messages)
+    if isinstance(response_text, dict) and 'error' in response_text:
+        return jsonify(response_text), 500
+
+    # Parse JSON from LLM response
+    try:
+        import re as _re
+        m = _re.search(r'\{[\s\S]*\}', response_text)
+        parsed = json.loads(m.group(0)) if m else {'message': response_text, 'actions': []}
+    except Exception:
+        parsed = {'message': response_text, 'actions': []}
+
+    if 'message' not in parsed:
+        parsed['message'] = response_text
+    if 'actions' not in parsed:
+        parsed['actions'] = []
+
+    return jsonify(parsed)
 
 
 # ── DB init helper ────────────────────────────────────────────────────────────
