@@ -345,10 +345,10 @@
   .stats-pills { display:flex; align-items:center; gap:10px; flex-shrink:0; }
   .stats-tools { display:flex; align-items:center; gap:4px; margin-left:auto; flex-wrap:wrap; justify-content:flex-end; }
   /* Split-button: left action + right dropdown arrow */
-  .split-btn { display:inline-flex; height:24px; border-radius:6px; overflow:hidden; border:1px solid var(--border); }
-  .split-btn .split-main { font-size:11px; padding:0 8px; background:transparent; border:none; border-right:1px solid var(--border); cursor:pointer; white-space:nowrap; color:var(--text-light); transition:background .12s; }
+  .split-btn { display:inline-flex; height:24px; border-radius:6px; border:1px solid var(--border); position:relative; }
+  .split-btn .split-main { font-size:11px; padding:0 8px; background:transparent; border:none; border-right:1px solid var(--border); cursor:pointer; white-space:nowrap; color:var(--text-light); transition:background .12s; border-radius:5px 0 0 5px; }
   .split-btn .split-main:hover { background:var(--row-hover); }
-  .split-btn .split-arrow { font-size:10px; padding:0 6px; background:transparent; border:none; cursor:pointer; color:var(--text-light); transition:background .12s; position:relative; }
+  .split-btn .split-arrow { font-size:10px; padding:0 6px; background:transparent; border:none; cursor:pointer; color:var(--text-light); transition:background .12s; border-radius:0 5px 5px 0; }
   .split-btn .split-arrow:hover { background:var(--row-hover); }
   .split-btn-menu { display:none; position:absolute; top:100%; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,.1); z-index:300; min-width:160px; padding:4px 0; }
   .split-btn-menu.open { display:block; }
@@ -571,7 +571,6 @@
         <button class="tab active" id="tab-grid" onclick="switchView('grid')">Sheet</button>
         <button class="tab" id="tab-gantt" onclick="switchView('gantt')">Gantt</button>
         <button class="tab" id="tab-dashboard" onclick="switchView('dashboard')">📊 Dashboard</button>
-        <button class="tab" id="tab-calendar" onclick="switchView('calendar')">📅 Calendar</button>
         <button class="tab" id="tab-kanban" onclick="switchView('kanban')">🗂 Kanban</button>
         <button class="tab" id="tab-report" onclick="openReportModal()">📄 Report</button>
         <button class="tab" id="tab-ai" onclick="openAIModal()" title="Build schedule from description">✨ AI Schedule</button>
@@ -2403,6 +2402,13 @@ function setupGanttDrag(rangeStart, cw) {
       return;
     }
 
+    // ── Ctrl/Cmd+click → open color picker ──────────────────
+    if (e.ctrlKey || e.metaKey) {
+      const cbar = e.target.closest('.gantt-bar');
+      if (cbar) { e.preventDefault(); openColorPicker(parseInt(cbar.dataset.tid), e.clientX, e.clientY); }
+      return;
+    }
+
     // ── Normal drag ──────────────────────────────────────────
     const bar = e.target.closest('.gantt-bar');
     const resize = e.target.closest('.gantt-resize');
@@ -3733,21 +3739,57 @@ function computeCriticalPath() {
   if (!tasks.length) return new Set();
   const taskMap = {};
   tasks.forEach(t => { taskMap[t.id] = t; });
-  // Find project end date
-  const projectEnd = tasks.reduce((mx, t) => t.end_date > mx ? t.end_date : mx, '');
-  // Walk back from terminal tasks (tasks with no successors)
-  const isTerminal = t => !tasks.some(s => parsePredecessors(s.depends_on).some(p => p.taskId === t.id));
-  const criticalIds = new Set();
-  const visit = t => {
-    criticalIds.add(t.id);
+
+  // Build successor map: succMap[tid] = [{tid, lag}]
+  const succMap = {};
+  tasks.forEach(t => { succMap[t.id] = []; });
+  tasks.forEach(t => {
     parsePredecessors(t.depends_on).forEach(p => {
-      const pred = taskMap[p.taskId];
-      if (pred) visit(pred);
+      if (taskMap[p.taskId]) succMap[p.taskId].push({ tid: t.id, lag: p.lag || 0 });
     });
+  });
+
+  // Day number helper (days since 2000-01-01)
+  const epoch = new Date('2000-01-01');
+  const toDay = s => Math.round((strToDate(s) - epoch) / 86400000);
+  const projectEndDay = tasks.reduce((mx, t) => Math.max(mx, toDay(t.end_date)), -Infinity);
+
+  // Backward pass: compute Late Finish for each task
+  // LF[terminal] = projectEndDay
+  // LF[t] = min over FS-successors s of (LF[s] - duration(s) + lag)
+  const lf = {};
+  const visited = new Set();
+  const inStack = new Set();
+  const computeLF = t => {
+    if (visited.has(t.id)) return;
+    if (inStack.has(t.id)) { lf[t.id] = projectEndDay; visited.add(t.id); return; } // cycle guard
+    inStack.add(t.id);
+    succMap[t.id].forEach(s => { if (!visited.has(s.tid)) computeLF(taskMap[s.tid]); });
+    const succs = succMap[t.id];
+    if (!succs.length) {
+      lf[t.id] = projectEndDay;
+    } else {
+      lf[t.id] = Math.min(...succs.map(s => {
+        const st = taskMap[s.tid];
+        const dur = toDay(st.end_date) - toDay(st.start_date) + 1;
+        return lf[s.tid] - dur + s.lag;
+      }));
+    }
+    inStack.delete(t.id);
+    visited.add(t.id);
   };
-  tasks.filter(t => isTerminal(t) && t.end_date === projectEnd).forEach(t => visit(t));
-  // If nothing chains to project end, mark all terminal tasks
-  if (!criticalIds.size) tasks.filter(isTerminal).forEach(t => visit(t));
+  tasks.forEach(t => computeLF(t));
+
+  // Critical: zero total float (Late Finish == Early Finish)
+  const criticalIds = new Set();
+  tasks.forEach(t => {
+    if (lf[t.id] <= toDay(t.end_date)) criticalIds.add(t.id);
+  });
+
+  // Fallback: no dependencies → highlight tasks ending on project end date
+  if (!criticalIds.size) {
+    tasks.filter(t => toDay(t.end_date) === projectEndDay).forEach(t => criticalIds.add(t.id));
+  }
   return criticalIds;
 }
 
