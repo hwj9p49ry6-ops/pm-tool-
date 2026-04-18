@@ -8,17 +8,16 @@ A lightweight project and task manager that runs entirely on your Mac — no clo
 - Gantt chart (day / week / month / quarter zoom)
 - Grid view with parent/child task hierarchy and collapse
 - Export to Excel, PowerPoint, PDF
-- Radar integration (Apple internal)
 - Status report generation
 
-## Setup
+## Setup (one time)
 
 **Requires Python 3.9+**
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/abhinav-mitra/pm-tool
-cd pm-tool
+git clone https://github.com/hwj9p49ry6-ops/pm-tool-.git
+cd pm-tool-
 
 # 2. Install dependencies
 pip3 install -r requirements.txt
@@ -30,14 +29,19 @@ python3 app.py
 open http://localhost:5000
 ```
 
-## Updating
+## Getting updates
+
+When new changes are available:
 
 ```bash
+cd pm-tool-
 git pull
 python3 app.py
 ```
 
-Your data lives in `pm.db` (SQLite) on your own Mac and is never shared.
+## Your data
+
+Your projects and tasks are stored in `pm.db` on your own Mac. Nothing is shared or uploaded anywhere.
 
 ## Customization
 
