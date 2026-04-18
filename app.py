@@ -8,22 +8,9 @@ import secrets
 
 from flask import Flask, jsonify, request, render_template, g, send_file
 
-# Ensure we can find db.py and integrations when run from any cwd
-_HERE = os.path.dirname(__file__)
-_ROOT = os.path.abspath(os.path.join(_HERE, '..', '..'))
-sys.path.insert(0, _HERE)
-sys.path.insert(0, _ROOT)
-from db import init_db, get_db
-
-# Use Apple corporate CA bundle so Floodgate SSL works off-VPN
-_APPLE_CA = os.path.expanduser('~/.claude/apple/certs/bundle.pem')
-if os.path.exists(_APPLE_CA) and not os.environ.get('REQUESTS_CA_BUNDLE'):
-    os.environ['REQUESTS_CA_BUNDLE'] = _APPLE_CA
-    os.environ['SSL_CERT_FILE'] = _APPLE_CA
-
 app = Flask(__name__, template_folder='templates')
-app.config['DATABASE'] = os.path.join(os.path.dirname(__file__), 'pm.db')
-app.secret_key = os.environ.get('PM_SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['DATABASE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pm.db')
+app.secret_key = 'dev-secret-key'
 
 
 @app.teardown_appcontext
