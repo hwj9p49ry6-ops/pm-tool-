@@ -1134,6 +1134,7 @@ function renderGrid() {
         <button class="btn btn-ghost stats-tool-btn" onclick="toggleFilterBar()" title="Filter & Sort">Filter${hasFilter ? '<span class="filter-active-dot"></span>' : ''}</button>
         <button class="btn btn-ghost stats-tool-btn" onclick="openFmtModal()" title="Conditional Formatting">Format${hasFmt ? '<span class="filter-active-dot"></span>' : ''}</button>
         <button class="btn btn-ghost stats-tool-btn ${state.businessDaysMode ? 'active' : ''}" onclick="toggleBusinessDays()" title="Skip weekends in date calculations">${state.businessDaysMode ? 'Biz Days ✓' : 'Biz Days'}</button>
+        <button id="refresh-schedule-btn" class="btn btn-ghost stats-tool-btn" onclick="recalculateSchedule()" title="Check all dependencies and enforce dates across the entire schedule">↺ Refresh</button>
         <span class="stat-sep">|</span>
         <input type="file" id="excel-upload-input" accept=".xlsx" style="display:none" onchange="uploadExcel(this)">
         <input type="file" id="csv-upload-input" accept=".csv" style="display:none" onchange="uploadCSV(this)">
@@ -1432,9 +1433,7 @@ async function _doCommit(el) {
     const stored = predFromInput(rawVal, state.tasks);
     if (stored === task.depends_on) return;
     updates.depends_on = stored;
-    // Compute dates from the new predecessor
-    const tempTask = { ...task, depends_on: stored };
-    Object.assign(updates, autoCompute(tempTask, 'predecessor', state.tasks));
+    // Let backend _propagate_schedule compute new dates — it handles start+end+weekends correctly
   } else if (field === 'duration') {
     const dur = rawVal ? parseInt(rawVal) : null;
     if (dur === task.duration) return;
@@ -1533,7 +1532,6 @@ async function propagateSchedule(rootTid) {
       const dur = daysBetween(strToDate(t.start_date), strToDate(t.end_date)); // end - start offset
       let candidateStart;
       switch ((p.type || 'FS').toUpperCase()) {
-        case 'FS': candidateStart = addDays(pred.end_date,   1 + lag);       break;
         case 'FS': candidateStart = nextWorkday(addDays(pred.end_date,   1 + lag));   break;
         case 'SS': candidateStart = nextWorkday(addDays(pred.start_date, lag));       break;
         case 'FF': candidateStart = addDays(pred.end_date,   lag - dur);              break;
@@ -1565,6 +1563,29 @@ async function propagateSchedule(rootTid) {
   showToast(`↳ ${count} dependent task${count > 1 ? 's' : ''} rescheduled`);
   if (state.activeView === 'gantt') buildGanttSVG();
   else if (state.activeView === 'grid') renderTaskRows();
+}
+
+
+async function recalculateSchedule() {
+  if (!state.activeProjectId) return;
+  const btn = document.getElementById('refresh-schedule-btn');
+  if (btn) { btn.textContent = '↺ Checking…'; btn.disabled = true; }
+  try {
+    const moved = await api.post(`/api/projects/${state.activeProjectId}/recalculate-schedule`, {});
+    if (!moved.length) {
+      showToast('✓ Schedule is consistent — no changes needed');
+    } else {
+      moved.forEach(p => {
+        const j = state.tasks.findIndex(t => t.id === p.id);
+        if (j >= 0) { state.tasks[j].start_date = p.start_date; state.tasks[j].end_date = p.end_date; }
+      });
+      showToast(`↺ ${moved.length} task${moved.length > 1 ? 's' : ''} rescheduled to match dependencies`);
+    }
+    if (state.activeView === 'gantt') renderGantt();
+    else if (state.activeView === 'grid') renderTaskRows();
+  } finally {
+    if (btn) { btn.textContent = '↺ Refresh'; btn.disabled = false; }
+  }
 }
 
 
@@ -2164,6 +2185,7 @@ function renderGantt() {
           <option value="SF">SF</option>
         </select>
         <button id="gantt-link-btn" class="zoom-btn ${_ganttLinkMode?'link-active':''}" onclick="toggleGanttConnect()" title="Click two task bars to create a dependency arrow">${_ganttLinkMode ? (_ganttLinkSourceTid ? 'Click target…' : 'Click source…') : 'Link Tasks'}</button>
+        <button id="refresh-schedule-btn" class="zoom-btn" onclick="recalculateSchedule()" title="Check all dependencies and enforce dates across the entire schedule">↺ Refresh</button>
         <span style="width:1px;background:var(--border);height:18px;margin:0 4px;display:inline-block;flex-shrink:0;"></span>
         <div class="split-btn" style="position:relative;">
           <button class="split-main" onclick="toggleCriticalPath()" title="Highlight critical path">${state.showCriticalPath ? 'Critical ✓' : 'Critical'}</button>

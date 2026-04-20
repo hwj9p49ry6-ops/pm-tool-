@@ -293,6 +293,88 @@ def _propagate_schedule(db, root_tid):
     return [{'id': tid, **dates} for tid, dates in changed.items()]
 
 
+@app.route('/api/projects/<int:pid>/recalculate-schedule', methods=['POST'])
+def recalculate_schedule(pid):
+    """Recalculate the entire project schedule: topological sort then enforce all dependency constraints."""
+    db = _get_db()
+    rows = db.execute("SELECT * FROM tasks WHERE project_id=?", (pid,)).fetchall()
+    if not rows:
+        return jsonify([])
+    tasks = {r['id']: dict(r) for r in rows}
+
+    # Build predecessor and successor maps
+    succ_map = {tid: [] for tid in tasks}
+    pred_count = {tid: 0 for tid in tasks}
+    for t in tasks.values():
+        for p in _parse_predecessors(t.get('depends_on', '')):
+            if p['task_id'] in tasks:
+                succ_map[p['task_id']].append({'tid': t['id'], 'type': p['type'], 'lag': p['lag']})
+                pred_count[t['id']] += 1
+
+    # Topological sort (Kahn's algorithm) — process tasks with no remaining unprocessed predecessors first
+    queue = [tid for tid in tasks if pred_count[tid] == 0]
+    order = []
+    remaining_pred = dict(pred_count)
+    while queue:
+        tid = queue.pop(0)
+        order.append(tid)
+        for s in succ_map.get(tid, []):
+            remaining_pred[s['tid']] -= 1
+            if remaining_pred[s['tid']] == 0:
+                queue.append(s['tid'])
+    # Append any cycle participants last (so they at least get processed)
+    order.extend([tid for tid in tasks if tid not in set(order)])
+
+    changed = {}
+    for tid in order:
+        t = tasks[tid]
+        earliest = None
+        for p in _parse_predecessors(t.get('depends_on', '')):
+            pred = tasks.get(p['task_id'])
+            if not pred:
+                continue
+            lag = p['lag']
+            try:
+                if p['type'] == 'FS' and pred.get('end_date'):
+                    cand = _next_workday(date.fromisoformat(pred['end_date']) + timedelta(days=1 + lag))
+                elif p['type'] == 'SS' and pred.get('start_date'):
+                    cand = _next_workday(date.fromisoformat(pred['start_date']) + timedelta(days=lag))
+                elif p['type'] == 'FF' and pred.get('end_date') and t.get('start_date') and t.get('end_date'):
+                    dur = (date.fromisoformat(t['end_date']) - date.fromisoformat(t['start_date'])).days
+                    cand = date.fromisoformat(pred['end_date']) + timedelta(days=lag) - timedelta(days=dur)
+                elif p['type'] == 'SF' and pred.get('start_date') and t.get('start_date') and t.get('end_date'):
+                    dur = (date.fromisoformat(t['end_date']) - date.fromisoformat(t['start_date'])).days
+                    cand = date.fromisoformat(pred['start_date']) + timedelta(days=lag) - timedelta(days=dur)
+                else:
+                    continue
+                cand_str = cand.isoformat()
+                if earliest is None or cand_str > earliest:
+                    earliest = cand_str
+            except (ValueError, TypeError):
+                continue
+
+        if earliest and t.get('start_date') and earliest > t['start_date']:
+            try:
+                old_start = date.fromisoformat(t['start_date'])
+                old_end   = date.fromisoformat(t['end_date']) if t.get('end_date') else old_start
+                dur = (old_end - old_start).days
+                new_start = date.fromisoformat(earliest)
+                new_end   = new_start + timedelta(days=dur)
+                t['start_date'] = new_start.isoformat()
+                t['end_date']   = new_end.isoformat()
+                changed[tid] = {'start_date': t['start_date'], 'end_date': t['end_date']}
+            except (ValueError, TypeError):
+                pass
+
+    for tid, dates in changed.items():
+        db.execute("UPDATE tasks SET start_date=?, end_date=? WHERE id=?",
+                   (dates['start_date'], dates['end_date'], tid))
+    if changed:
+        db.commit()
+
+    return jsonify([{'id': tid, **dates} for tid, dates in changed.items()])
+
+
 @app.route('/api/tasks/<int:tid>', methods=['PUT'])
 def update_task(tid):
     data = request.get_json() or {}
