@@ -1448,6 +1448,11 @@ async function _doCommit(el) {
     undoStack.push({ type: 'edit', tid, oldSnapshot });
     if (undoStack.length > 30) undoStack.shift();
     await patchTask(tid, updates);
+    // Propagate schedule forward if dates or dependencies changed
+    const scheduleFields = ['start_date', 'end_date', 'duration', 'predecessor', 'depends_on'];
+    if (scheduleFields.some(f => f in updates || el.dataset.field === f)) {
+      propagateSchedule(tid);
+    }
     // Only re-render if auto-compute changed other fields (e.g. end_date derived from duration)
     if (state.activeView === 'grid' && hasComputedExtras) renderTaskRows();
   }
@@ -1465,7 +1470,79 @@ async function patchTask(tid, updates) {
   if (state.activeView === 'gantt') renderGantt();
 }
 
-async function addTask() {
+// ── Forward scheduling: propagate date changes to all successors ─────────────
+// Called after any task's dates or predecessors change.
+// Performs a topological BFS forward pass, pushing successor start dates
+// forward (never backward) to honor all dependency constraints.
+async function propagateSchedule(rootTid) {
+  const tasks = state.tasks.filter(t => t.start_date && t.end_date);
+  if (!tasks.length) return;
+  const taskMap = {};
+  tasks.forEach(t => { taskMap[t.id] = t; });
+
+  // Build successor map: succMap[tid] = [{tid, type, lag}]
+  const succMap = {};
+  tasks.forEach(t => { succMap[t.id] = []; });
+  tasks.forEach(t => {
+    parsePredecessors(t.depends_on).forEach(p => {
+      if (taskMap[p.taskId]) succMap[p.taskId].push({ tid: t.id, type: p.type, lag: p.lag || 0 });
+    });
+  });
+
+  const changed = new Map(); // tid → {start_date, end_date}
+  const queue = [...(succMap[rootTid] || []).map(s => s.tid)];
+  const visited = new Set();
+
+  while (queue.length) {
+    const tid = queue.shift();
+    if (visited.has(tid)) continue;
+    visited.add(tid);
+    const t = taskMap[tid];
+    if (!t) continue;
+
+    // Compute the earliest start this task can have given ALL its predecessors
+    let earliestStart = null;
+    parsePredecessors(t.depends_on).forEach(p => {
+      const pred = taskMap[p.taskId];
+      if (!pred) return;
+      const lag = p.lag || 0;
+      const dur = daysBetween(strToDate(t.start_date), strToDate(t.end_date)); // end - start offset
+      let candidateStart;
+      switch ((p.type || 'FS').toUpperCase()) {
+        case 'FS': candidateStart = addDays(pred.end_date,   1 + lag);       break;
+        case 'SS': candidateStart = addDays(pred.start_date, lag);           break;
+        case 'FF': candidateStart = addDays(pred.end_date,   lag - dur);     break;
+        case 'SF': candidateStart = addDays(pred.start_date, lag - dur);     break;
+        default:   candidateStart = addDays(pred.end_date,   1 + lag);
+      }
+      if (!earliestStart || candidateStart > earliestStart) earliestStart = candidateStart;
+    });
+
+    if (earliestStart && earliestStart > t.start_date) {
+      const dur = daysBetween(strToDate(t.start_date), strToDate(t.end_date));
+      t.start_date = earliestStart;
+      t.end_date   = addDays(earliestStart, dur);
+      changed.set(tid, { start_date: t.start_date, end_date: t.end_date });
+    }
+
+    // Always enqueue successors so they can recheck their own predecessors
+    (succMap[tid] || []).forEach(s => { if (!visited.has(s.tid)) queue.push(s.tid); });
+  }
+
+  if (!changed.size) return;
+
+  // Persist all shifted tasks
+  await Promise.all([...changed.entries()].map(([tid, dates]) =>
+    api.put(`/api/tasks/${tid}`, dates)
+  ));
+
+  const count = changed.size;
+  showToast(`↳ ${count} dependent task${count > 1 ? 's' : ''} rescheduled`);
+  if (state.activeView === 'gantt') buildGanttSVG();
+  else if (state.activeView === 'grid') renderTaskRows();
+}
+
+
   const task = await api.post(`/api/projects/${state.activeProjectId}/tasks`, {});
   state.tasks.push(task);
   // Always switch to grid so user can fill in task details
@@ -2394,8 +2471,9 @@ function setupGanttDrag(rangeStart, cw) {
             undoStack.push({ type: 'link', toTid: tid, oldDependsOn });
             if (undoStack.length > 20) undoStack.shift();
             await api.put(`/api/tasks/${tid}`, { depends_on: toTask.depends_on });
-            showToast(`✓ ${linkType} dependency created — Cmd+Z to undo`);
             buildGanttSVG();
+            propagateSchedule(tid);
+            showToast(`✓ ${linkType} dependency created — Cmd+Z to undo`);
           }
         })();
       }
@@ -2477,6 +2555,7 @@ function setupGanttDrag(rangeStart, cw) {
       if (t) { t.start_date = newStart; t.end_date = newEnd; if (newDur) t.duration = newDur; }
       await api.put(`/api/tasks/${dragging.tid}`, { start_date: newStart, end_date: newEnd, ...(newDur ? {duration: newDur} : {}) });
       buildGanttSVG();
+      propagateSchedule(dragging.tid);
     }, { signal: dragAC.signal, once: true });
 
   }, { signal: svgAC.signal });
