@@ -1431,6 +1431,10 @@ def ai_schedule(pid):
     image_b64 = data.get('image')       # base64 string, no data-URL prefix
     media_type = data.get('media_type', 'image/jpeg')
 
+    db = _get_db()
+    if not db.execute("SELECT id FROM projects WHERE id=?", (pid,)).fetchone():
+        return jsonify({'error': 'Project not found'}), 404
+
     if not prompt_text and not image_b64:
         return jsonify({'error': 'No prompt or image provided'}), 400
 
