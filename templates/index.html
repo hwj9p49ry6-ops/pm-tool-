@@ -1972,18 +1972,26 @@ async function ctxToggleMilestone() {
 }
 async function ctxIndent() {
   document.getElementById('ctx-menu').style.display = 'none';
-  if (!ctxTid || !canIndentTask(ctxTid)) return;
+  if (!ctxTid) return;
+  if (!canIndentTask(ctxTid)) {
+    const t = state.tasks.find(x => x.id === ctxTid);
+    if (t && t.parent_id != null) showToast('Already a child task — use ← Outdent first or right-click');
+    else showToast('Cannot indent: select a task that is not the first row');
+    return;
+  }
   const above = taskAboveInDisplay(ctxTid);
   if (!above) return;
   await patchTask(ctxTid, { parent_id: above.id });
+  showToast('→ Task indented (Shift+Tab to revert)');
   renderTaskRows(); setupDragDrop();
 }
 async function ctxOutdent() {
   document.getElementById('ctx-menu').style.display = 'none';
   if (!ctxTid) return;
   const task = state.tasks.find(t => t.id === ctxTid);
-  if (!task || task.parent_id == null) return;
+  if (!task || task.parent_id == null) { showToast('Task is already top-level'); return; }
   await patchTask(ctxTid, { parent_id: null });
+  showToast('← Task outdented (top-level)');
   renderTaskRows(); setupDragDrop();
 }
 document.addEventListener('click', () => document.getElementById('ctx-menu').style.display = 'none');

@@ -1568,7 +1568,14 @@ Rules:
 
     # Try Floodgate (internal Apple gateway)
     try:
-        sys.path.insert(0, _ROOT)
+        # _ROOT may be wrong when app runs from pm-tool/; search candidate paths
+        _fg_root = next(
+            (p for p in [_ROOT, os.path.expanduser('~/epm-assistant')]
+             if os.path.exists(os.path.join(p, 'integrations', 'floodgate', 'floodgate.py'))),
+            _ROOT
+        )
+        if _fg_root not in sys.path:
+            sys.path.insert(0, _fg_root)
         from integrations.floodgate.floodgate import FloodgateClient
         client = FloodgateClient(model='sonnet')
         result = client.call(
@@ -1669,7 +1676,13 @@ def _call_llm_for_chat(system, messages):
     """Call Claude for multi-turn project assistant chat. Reuses Floodgate→Anthropic pattern."""
     # Try Floodgate (internal Apple gateway)
     try:
-        sys.path.insert(0, _ROOT)
+        _fg_root = next(
+            (p for p in [_ROOT, os.path.expanduser('~/epm-assistant')]
+             if os.path.exists(os.path.join(p, 'integrations', 'floodgate', 'floodgate.py'))),
+            _ROOT
+        )
+        if _fg_root not in sys.path:
+            sys.path.insert(0, _fg_root)
         from integrations.floodgate.floodgate import FloodgateClient
         client = FloodgateClient(model='sonnet')
         result = client.call(
