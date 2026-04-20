@@ -172,6 +172,12 @@
   .gantt-del-btn { display: none; flex-shrink: 0; color: #e05252; font-size: 16px; font-weight: 700; cursor: pointer; padding: 0 6px; line-height: 1; }
   .gantt-label-row:hover .gantt-del-btn { display: block; }
   .gantt-del-btn:hover { color: #b91c1c; }
+  .gantt-label-action { display: none; flex-shrink: 0; font-size: 13px; cursor: pointer; padding: 0 4px; line-height: 20px; border-radius: 3px; font-weight: 700; }
+  .gantt-label-row:hover .gantt-label-action { display: inline-flex; align-items: center; }
+  .gantt-add-child-btn { color: #0a84ff; }
+  .gantt-add-child-btn:hover { background: rgba(10,132,255,0.1); }
+  .gantt-detach-btn { color: #8e8e93; font-size: 12px; }
+  .gantt-detach-btn:hover { background: rgba(255,55,95,0.1); color: #ff375f; }
   #gantt-chart-wrap { flex: 1; overflow: auto; }
   #gantt-svg { display: block; }
   /* Link mode */
@@ -191,6 +197,18 @@
   #gantt-legend { display: flex; align-items: center; gap: 12px; padding: 5px 14px; background: var(--header-bg); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; font-size: 10px; color: var(--text-light); }
   .gantt-legend-item { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
   .gantt-legend-box { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  /* Gantt Edit Table panel */
+  #gantt-edit-table-panel { display: none; flex-direction: column; flex-shrink: 0; max-height: 40vh; overflow: hidden; border-top: 2px solid var(--border); }
+  #gantt-edit-table-panel.open { display: flex; }
+  #gantt-edit-table-wrap { overflow: auto; flex: 1; }
+  .get-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  .get-table th { padding: 5px 8px; background: var(--header-bg); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-light); border-bottom: 1px solid var(--border); position: sticky; top: 0; white-space: nowrap; }
+  .get-table td { padding: 2px 4px; border-bottom: 1px solid var(--border); }
+  .get-input { border: 1px solid transparent; border-radius: 4px; padding: 3px 6px; font-size: 12px; font-family: var(--font); width: 100%; background: transparent; }
+  .get-input:focus { border-color: var(--accent); background: #fff; outline: none; }
+  .get-input.dirty { border-color: #ff9f0a !important; background: rgba(255,159,10,0.07); }
+  #gantt-edit-table-footer { padding: 7px 12px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; background: var(--header-bg); }
+  #get-dirty-count { font-size: 11px; color: #ff9f0a; font-weight: 600; min-width: 80px; }
   /* Gantt edit panel */
   #gantt-edit-panel { position: fixed; right: 0; top: 52px; bottom: 0; width: 300px; background: #fff; border-left: 1px solid var(--border); box-shadow: -4px 0 20px rgba(0,0,0,.1); z-index: 150; display: flex; flex-direction: column; transform: translateX(100%); transition: transform .2s ease; }
   #gantt-edit-panel.open { transform: translateX(0); }
@@ -679,6 +697,7 @@ const state = {
   condFormats: [],
   showCriticalPath: false,
   showBaseline: false,
+  showSprintCadence: false,
   businessDaysMode: false,
 };
 
@@ -963,6 +982,7 @@ async function selectProject(pid) {
   renderSidebar();
   state.tasks = await api.get(`/api/projects/${pid}/tasks`);
   loadCollapseState();
+  loadGanttPrefs();
   renderView();
 }
 
@@ -2172,6 +2192,32 @@ const ZOOM = {
 const TASK_ROW_H = 36, HEADER_H = 48, BAR_H = 20, BAR_Y_OFFSET = (TASK_ROW_H - BAR_H) / 2;
 const COLORS = ['#4A90E2','#E25252','#3ec97a','#f5a623','#9b59b6','#1abc9c','#e67e22'];
 
+// Sprint milestone cadence — FY2026 Baltra program (6 dev + 2 convergence weeks per milestone)
+const SPRINT_CADENCE = [
+  {s:0,w:'W1',d:'2026-03-16'},{s:0,w:'W2',d:'2026-03-23'},{s:0,w:'W3',d:'2026-03-30'},
+  {s:0,w:'W4',d:'2026-04-06'},{s:0,w:'W5',d:'2026-04-13'},{s:0,w:'W6',d:'2026-04-20'},
+  {s:0,w:'C1',d:'2026-04-27'},{s:0,w:'C2',d:'2026-05-04'},
+  {s:1,w:'W1',d:'2026-05-11'},{s:1,w:'W2',d:'2026-05-18'},{s:1,w:'W3',d:'2026-05-25'},
+  {s:1,w:'W4',d:'2026-06-01'},{s:1,w:'W5',d:'2026-06-08'},{s:1,w:'W6',d:'2026-06-15'},
+  {s:1,w:'C1',d:'2026-06-22'},{s:1,w:'C2',d:'2026-06-29'},
+  {s:2,w:'W1',d:'2026-07-06'},{s:2,w:'W2',d:'2026-07-13'},{s:2,w:'W3',d:'2026-07-20'},
+  {s:2,w:'W4',d:'2026-07-27'},{s:2,w:'W5',d:'2026-08-03'},{s:2,w:'W6',d:'2026-08-10'},
+  {s:2,w:'C1',d:'2026-08-17'},{s:2,w:'C2',d:'2026-08-24'},
+  {s:3,w:'W1',d:'2026-08-31'},{s:3,w:'W2',d:'2026-09-07'},{s:3,w:'W3',d:'2026-09-14'},
+  {s:3,w:'W4',d:'2026-09-21'},{s:3,w:'W5',d:'2026-09-28'},{s:3,w:'W6',d:'2026-10-05'},
+  {s:3,w:'C1',d:'2026-10-12'},{s:3,w:'C2',d:'2026-10-19'},
+  {s:4,w:'W1',d:'2026-10-26'},{s:4,w:'W2',d:'2026-11-02'},{s:4,w:'W3',d:'2026-11-09'},
+  {s:4,w:'W4',d:'2026-11-16'},{s:4,w:'W5',d:'2026-11-23'},{s:4,w:'W6',d:'2026-11-30'},
+  {s:4,w:'C1',d:'2026-12-07'},{s:4,w:'C2',d:'2026-12-14'},
+  {s:5,w:'W1',d:'2026-12-21'},{s:5,w:'W2',d:'2026-12-28'},{s:5,w:'W3',d:'2027-01-04'},
+  {s:5,w:'W4',d:'2027-01-11'},{s:5,w:'W5',d:'2027-01-18'},{s:5,w:'W6',d:'2027-01-25'},
+  {s:5,w:'C1',d:'2027-02-01'},{s:5,w:'C2',d:'2027-02-08'},
+];
+// Per-sprint: body background (very subtle), header band, boundary line
+const SPRINT_BG    = ['rgba(10,132,255,.05)','rgba(52,199,89,.05)','rgba(255,159,10,.05)','rgba(0,199,190,.05)','rgba(88,86,214,.05)','rgba(255,55,95,.05)'];
+const SPRINT_HDR   = ['rgba(10,132,255,.14)','rgba(52,199,89,.14)','rgba(255,159,10,.14)','rgba(0,199,190,.14)','rgba(88,86,214,.14)','rgba(255,55,95,.14)'];
+const SPRINT_LINE  = ['rgba(10,132,255,.45)','rgba(52,199,89,.45)','rgba(255,159,10,.45)','rgba(0,199,190,.45)','rgba(88,86,214,.45)','rgba(255,55,95,.45)'];
+
 function ganttDateRange() {
   const dl = computeHierarchy(state.tasks);
   const dated = dl.filter(e => e.task.start_date && (e.task.end_date || (e.isParent && e.rollup && e.rollup.end_date)));
@@ -2219,8 +2265,10 @@ function renderGantt() {
           <div class="split-btn-menu" id="gantt-view-menu">
             <button class="split-btn-menu-item" onclick="toggleCriticalPath()">${state.showCriticalPath ? '✓ ' : ''}Critical Path</button>
             <button class="split-btn-menu-item" onclick="toggleBaseline()">${state.showBaseline ? '✓ ' : ''}Baseline</button>
+            <button class="split-btn-menu-item" onclick="toggleSprintCadence()">${state.showSprintCadence ? '✓ ' : ''}Sprint Cadence</button>
           </div>
         </div>
+        <button id="gantt-edittable-btn" class="zoom-btn ${_getOpen?'active':''}" onclick="toggleGanttEditTable()" title="Show editable task table to bulk-edit schedule">⊞ Edit Table</button>
         <span style="flex:1"></span>
         <div class="split-btn" style="position:relative;">
           <button class="split-main" onclick="exportGanttPNG()" title="Download Gantt as PNG">Export PNG</button>
@@ -2251,6 +2299,17 @@ function renderGantt() {
         <span style="width:1px;background:var(--border);height:12px;"></span>
         <span class="gantt-legend-item" style="color:#ff9f0a;font-weight:700;">▲ Today</span>
       </div>
+      <div id="gantt-edit-table-panel" class="${_getOpen?'open':''}">
+        <div id="gantt-edit-table-wrap">
+          <!-- populated by buildGanttEditTable() -->
+        </div>
+        <div id="gantt-edit-table-footer">
+          <span id="get-dirty-count"></span>
+          <span style="flex:1"></span>
+          <button class="btn btn-ghost stats-tool-btn" onclick="resetGanttEditTable()">Reset</button>
+          <button class="btn btn-primary" onclick="applyGanttEditTable()">Apply Changes</button>
+        </div>
+      </div>
       <div id="gantt-body">
         <div id="gantt-labels">
           <div id="gantt-labels-header">Task</div>
@@ -2263,7 +2322,50 @@ function renderGantt() {
   syncGanttScroll();
 }
 
-function setGanttZoom(z) { state.ganttZoom = z; renderGantt(); }
+function setGanttZoom(z) { state.ganttZoom = z; saveGanttPrefs(); renderGantt(); }
+function toggleSprintCadence() { state.showSprintCadence = !state.showSprintCadence; saveGanttPrefs(); renderGantt(); }
+
+function saveGanttPrefs() {
+  if (!state.activeProjectId) return;
+  localStorage.setItem(`gantt_prefs_${state.activeProjectId}`, JSON.stringify({
+    zoom: state.ganttZoom,
+    sprint: state.showSprintCadence,
+  }));
+}
+function loadGanttPrefs() {
+  if (!state.activeProjectId) return;
+  try {
+    const saved = JSON.parse(localStorage.getItem(`gantt_prefs_${state.activeProjectId}`) || 'null');
+    if (saved) {
+      if (saved.zoom) state.ganttZoom = saved.zoom;
+      if (saved.sprint !== undefined) state.showSprintCadence = saved.sprint;
+    }
+  } catch(e) {}
+}
+
+async function addGanttChildTask(parentTid) {
+  const parent = state.tasks.find(t => t.id === parentTid);
+  if (!parent) return;
+  const newTask = await api.post(`/api/projects/${state.activeProjectId}/tasks`, {
+    name: 'New task',
+    owner: parent.owner || '',
+    start_date: parent.start_date || '',
+    end_date: parent.end_date || '',
+    status: 'Not Started',
+    priority: parent.priority || 'Normal',
+    parent_id: parentTid,
+  });
+  state.tasks.push(newTask);
+  state.collapsedIds.delete(parentTid);
+  saveCollapseState();
+  renderGantt();
+  showToast('Child task added — click its name to edit');
+}
+
+async function detachFromParent(tid) {
+  await patchTask(tid, { parent_id: null });
+  showToast('Task moved to top level');
+}
 
 function buildGanttSVG() {
   const { start, end } = ganttDateRange();
@@ -2290,6 +2392,23 @@ function buildGanttSVG() {
       html += `<rect x="${d*cw}" y="${HEADER_H}" width="${cw}" height="${svgH - HEADER_H}" fill="#f5f5f7" opacity="0.7"/>`;
   }
 
+  // Sprint cadence — colored full-height bands behind everything
+  if (state.showSprintCadence) {
+    SPRINT_CADENCE.forEach((week, idx) => {
+      const sd = strToDate(week.d);
+      if (!sd) return;
+      const next = SPRINT_CADENCE[idx + 1];
+      const ed = next ? strToDate(next.d) : new Date(sd.getTime() + 7 * DAY_MS);
+      const x1 = daysBetween(start, sd) * cw;
+      const x2 = daysBetween(start, ed) * cw;
+      const wx1 = Math.max(0, x1), wx2 = Math.min(svgW, x2);
+      if (wx2 <= wx1) return;
+      const isConv = week.w[0] === 'C';
+      const bg = isConv ? 'rgba(0,0,0,0.025)' : SPRINT_BG[week.s % SPRINT_BG.length];
+      html += `<rect x="${wx1}" y="${HEADER_H}" width="${wx2 - wx1}" height="${svgH - HEADER_H}" fill="${bg}" pointer-events="none"/>`;
+    });
+  }
+
   // Row alternation (every other task row gets a very slight tint)
   displayList.forEach((_, i) => {
     if (i % 2 === 1) {
@@ -2298,28 +2417,64 @@ function buildGanttSVG() {
     }
   });
 
-  // Header background (two tiers: month top half, day bottom half)
+  // Header — top half: sprint week labels OR month labels; bottom half: dates
   html += `<rect x="0" y="0" width="${svgW}" height="${HEADER_H}" fill="#f5f5f7"/>`;
   html += `<line x1="0" y1="${HEADER_H/2}" x2="${svgW}" y2="${HEADER_H/2}" stroke="#d2d2d7" stroke-width="0.5"/>`;
 
-  // Month labels (top half of header, y=16)
-  let curMonth = -1, monthStartX = 0;
-  for (let d = 0; d <= totalDays; d++) {
-    const date = new Date(start.getTime() + d * DAY_MS);
-    const m = date.getMonth();
-    if (m !== curMonth || d === totalDays) {
-      if (curMonth !== -1) {
-        const monthW = d * cw - monthStartX;
-        const labelDate = new Date(start.getTime() + (monthStartX / cw) * DAY_MS);
-        const lbl = monthW < 50
-          ? labelDate.toLocaleString('default', {month:'short'})
-          : labelDate.toLocaleString('default', {month:'short', year:'2-digit'});
-        if (monthW >= 20) {
-          html += `<text x="${monthStartX + 8}" y="17" font-size="11" font-weight="700" fill="#1d1d1f" font-family="-apple-system,'SF Pro Text',sans-serif" letter-spacing="-0.01em">${lbl}</text>`;
-        }
-        html += `<line x1="${monthStartX}" y1="0" x2="${monthStartX}" y2="${HEADER_H}" stroke="#d2d2d7"/>`;
+  if (state.showSprintCadence) {
+    // Top half: sprint week labels with per-sprint background tints
+    SPRINT_CADENCE.forEach((week, idx) => {
+      const sd = strToDate(week.d);
+      if (!sd) return;
+      const next = SPRINT_CADENCE[idx + 1];
+      const ed = next ? strToDate(next.d) : new Date(sd.getTime() + 7 * DAY_MS);
+      const x1 = daysBetween(start, sd) * cw;
+      const x2 = daysBetween(start, ed) * cw;
+      const wx1 = Math.max(0, x1), wx2 = Math.min(svgW, x2);
+      if (wx2 <= wx1) return;
+      const ww = wx2 - wx1;
+      const isConv = week.w[0] === 'C';
+      const hdrBg = isConv ? 'rgba(0,0,0,0.03)' : SPRINT_HDR[week.s % SPRINT_HDR.length];
+      html += `<rect x="${wx1}" y="0" width="${ww}" height="${HEADER_H/2}" fill="${hdrBg}" pointer-events="none"/>`;
+      // Sprint boundary line (start of each new sprint)
+      if (week.w === 'W1' && x1 >= 0 && x1 <= svgW) {
+        html += `<line x1="${x1}" y1="0" x2="${x1}" y2="${svgH}" stroke="${SPRINT_LINE[week.s % SPRINT_LINE.length]}" stroke-width="1.5" pointer-events="none"/>`;
+        // Sprint label pill at top
+        const spLabel = `S${week.s}`;
+        html += `<text x="${x1 + 5}" y="14" font-size="10" font-weight="800" fill="${SPRINT_LINE[week.s % SPRINT_LINE.length].replace('0.45','0.9')}" font-family="-apple-system,'SF Pro Text',sans-serif" pointer-events="none">${spLabel}</text>`;
       }
-      curMonth = m; monthStartX = d * cw;
+      // Week label centered in column
+      const cx = (wx1 + wx2) / 2;
+      const fullLabel = `S${week.s}${week.w}`;
+      if (ww >= 30) {
+        html += `<text x="${cx}" y="15" font-size="9" font-weight="700" text-anchor="middle" fill="${isConv ? '#636366' : '#1d1d1f'}" font-family="-apple-system,'SF Pro Text',sans-serif" pointer-events="none">${fullLabel}</text>`;
+      } else if (ww >= 16) {
+        html += `<text x="${cx}" y="15" font-size="8" font-weight="700" text-anchor="middle" fill="${isConv ? '#8e8e93' : '#3a3a3c'}" font-family="-apple-system,sans-serif" pointer-events="none">${week.w}</text>`;
+      }
+      // Week divider line
+      if (x1 > 0 && x1 <= svgW && week.w !== 'W1')
+        html += `<line x1="${x1}" y1="0" x2="${x1}" y2="${HEADER_H}" stroke="#d2d2d7" stroke-width="0.5"/>`;
+    });
+  } else {
+    // Month labels (top half of header, y=16)
+    let curMonth = -1, monthStartX = 0;
+    for (let d = 0; d <= totalDays; d++) {
+      const date = new Date(start.getTime() + d * DAY_MS);
+      const m = date.getMonth();
+      if (m !== curMonth || d === totalDays) {
+        if (curMonth !== -1) {
+          const monthW = d * cw - monthStartX;
+          const labelDate = new Date(start.getTime() + (monthStartX / cw) * DAY_MS);
+          const lbl = monthW < 50
+            ? labelDate.toLocaleString('default', {month:'short'})
+            : labelDate.toLocaleString('default', {month:'short', year:'2-digit'});
+          if (monthW >= 20) {
+            html += `<text x="${monthStartX + 8}" y="17" font-size="11" font-weight="700" fill="#1d1d1f" font-family="-apple-system,'SF Pro Text',sans-serif" letter-spacing="-0.01em">${lbl}</text>`;
+          }
+          html += `<line x1="${monthStartX}" y1="0" x2="${monthStartX}" y2="${HEADER_H}" stroke="#d2d2d7"/>`;
+        }
+        curMonth = m; monthStartX = d * cw;
+      }
     }
   }
 
@@ -2511,6 +2666,8 @@ function buildGanttSVG() {
     return `<div class="gantt-label-row" style="padding-left:${pad}px;" title="${esc(t.name)} · ${t.owner||'Unassigned'} · ${t.status||''}">
       ${toggle}<span class="gantt-status-dot" style="background:${dotColor}"></span><span class="gantt-label-name">${esc(t.name)}</span>
       ${ownerInitials ? `<span style="font-size:9px;font-weight:700;color:var(--text-light);flex-shrink:0;padding:0 5px;" title="${esc(t.owner)}">${ownerInitials}</span>` : ''}
+      <span class="gantt-label-action gantt-add-child-btn" title="Add child task" onclick="event.stopPropagation();addGanttChildTask(${t.id})">+</span>
+      ${t.parent_id ? `<span class="gantt-label-action gantt-detach-btn" title="Remove from parent (make top-level)" onclick="event.stopPropagation();detachFromParent(${t.id})">⇡</span>` : ''}
       <span class="gantt-del-btn" title="Delete task" onclick="event.stopPropagation(); if(confirm('Delete task \\u201c${esc(t.name).replace(/'/g,"\\'")}\\u201d?')) deleteTask(${t.id})">×</span>
     </div>`;
   }).join('');
@@ -2541,6 +2698,10 @@ function syncGanttScroll() {
 let _ganttSvgAC = null;
 let _ganttLinkMode = false;
 let _ganttLinkSourceTid = null;
+// Edit Table state
+let _getOpen = false;
+let _getDirty = new Map();  // tid → {field → value}
+let _getOrig  = new Map();  // tid → task snapshot
 
 function toggleGanttConnect() {
   _ganttLinkMode = !_ganttLinkMode;
@@ -2555,7 +2716,146 @@ function toggleGanttConnect() {
   if (_ganttLinkMode) showToast('Click the source task bar…');
 }
 
-// Helper: SVG screen→SVG coordinate conversion (handles scroll correctly)
+// ═══════════════════════════════════════════════════════════
+// GANTT EDIT TABLE
+// ═══════════════════════════════════════════════════════════
+
+function toggleGanttEditTable() {
+  _getOpen = !_getOpen;
+  const panel = document.getElementById('gantt-edit-table-panel');
+  const btn   = document.getElementById('gantt-edittable-btn');
+  if (!panel) return;
+  if (_getOpen) {
+    panel.classList.add('open');
+    if (btn) { btn.classList.add('active'); btn.textContent = '⊞ Edit Table ✓'; }
+    buildGanttEditTable();
+  } else {
+    panel.classList.remove('open');
+    if (btn) { btn.classList.remove('active'); btn.textContent = '⊞ Edit Table'; }
+    _getDirty.clear(); _getOrig.clear();
+  }
+}
+
+function buildGanttEditTable() {
+  const wrap = document.getElementById('gantt-edit-table-wrap');
+  if (!wrap) return;
+  const dl = computeHierarchy(state.tasks);
+  // Snapshot originals (only if not already snapshotted — preserve dirty state across rebuilds)
+  dl.forEach(({task}) => {
+    if (!_getOrig.has(task.id)) _getOrig.set(task.id, {...task});
+  });
+
+  const STATUS_OPTS = ['Not Started','In Progress','Complete','Blocked','On Hold'];
+  const PRIORITY_OPTS = ['Low','Normal','High','Critical'];
+
+  let rows = dl.map(({task}, i) => {
+    const tid = task.id;
+    const dirty = _getDirty.get(tid) || {};
+    const v = (field, fallback='') => dirty[field] !== undefined ? dirty[field] : (task[field] ?? fallback);
+    const dc = (field) => dirty[field] !== undefined ? ' dirty' : '';
+
+    const statusOptions = STATUS_OPTS.map(s =>
+      `<option value="${s}" ${v('status')===s?'selected':''}>${s}</option>`).join('');
+    const priorityOptions = PRIORITY_OPTS.map(p =>
+      `<option value="${p}" ${v('priority')===p?'selected':''}>${p}</option>`).join('');
+
+    const predDisplay = dirty['depends_on'] !== undefined
+      ? dirty['depends_on']
+      : predToDisplay(task.depends_on);
+
+    return `<tr>
+      <td style="text-align:center;color:var(--text-light);font-size:11px;width:28px;padding:2px 4px;">${i+1}</td>
+      <td style="min-width:160px;"><input class="get-input${dc('name')}" data-tid="${tid}" data-field="name" value="${(v('name')).replace(/"/g,'&quot;')}" oninput="_getMarkDirty(${tid},'name',this.value,this)"></td>
+      <td style="min-width:110px;"><input class="get-input${dc('owner')}" data-tid="${tid}" data-field="owner" value="${(v('owner')).replace(/"/g,'&quot;')}" oninput="_getMarkDirty(${tid},'owner',this.value,this)"></td>
+      <td style="min-width:110px;"><select class="get-input${dc('status')}" data-tid="${tid}" data-field="status" onchange="_getMarkDirty(${tid},'status',this.value,this)">${statusOptions}</select></td>
+      <td style="min-width:80px;"><select class="get-input${dc('priority')}" data-tid="${tid}" data-field="priority" onchange="_getMarkDirty(${tid},'priority',this.value,this)">${priorityOptions}</select></td>
+      <td style="min-width:100px;"><input class="get-input${dc('start_date')}" type="date" data-tid="${tid}" data-field="start_date" value="${v('start_date')}" onchange="_getMarkDirty(${tid},'start_date',this.value,this)"></td>
+      <td style="min-width:100px;"><input class="get-input${dc('end_date')}" type="date" data-tid="${tid}" data-field="end_date" value="${v('end_date')}" onchange="_getMarkDirty(${tid},'end_date',this.value,this)"></td>
+      <td style="min-width:60px;"><input class="get-input${dc('pct_complete')}" type="number" min="0" max="100" data-tid="${tid}" data-field="pct_complete" value="${v('pct_complete',0)}" oninput="_getMarkDirty(${tid},'pct_complete',this.value,this)"></td>
+      <td style="min-width:90px;"><input class="get-input${dc('depends_on')}" data-tid="${tid}" data-field="depends_on" value="${predDisplay.replace(/"/g,'&quot;')}" oninput="_getMarkDirty(${tid},'depends_on',this.value,this)" placeholder="e.g. 2FS"></td>
+      <td style="min-width:140px;"><input class="get-input${dc('notes')}" data-tid="${tid}" data-field="notes" value="${(v('notes')).replace(/"/g,'&quot;')}" oninput="_getMarkDirty(${tid},'notes',this.value,this)"></td>
+    </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `<table class="get-table">
+    <thead><tr>
+      <th>#</th><th>Task Name</th><th>Owner</th><th>Status</th><th>Priority</th>
+      <th>Start</th><th>End</th><th>%</th><th>Predecessor</th><th>Notes</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+  _getUpdateDirtyCount();
+}
+
+function _getMarkDirty(tid, field, val, el) {
+  if (!_getDirty.has(tid)) _getDirty.set(tid, {});
+  const orig = _getOrig.get(tid);
+  const origVal = orig ? (orig[field] ?? '') : '';
+  // For depends_on, always track as raw display input (convert on apply)
+  const isDirty = field === 'depends_on'
+    ? val !== predToDisplay(origVal)
+    : String(val) !== String(origVal);
+  if (isDirty) {
+    _getDirty.get(tid)[field] = val;
+    if (el) el.classList.add('dirty');
+  } else {
+    delete _getDirty.get(tid)[field];
+    if (!Object.keys(_getDirty.get(tid)).length) _getDirty.delete(tid);
+    if (el) el.classList.remove('dirty');
+  }
+  _getUpdateDirtyCount();
+}
+
+function _getUpdateDirtyCount() {
+  const el = document.getElementById('get-dirty-count');
+  if (!el) return;
+  let count = 0;
+  for (const changes of _getDirty.values()) count += Object.keys(changes).length;
+  el.textContent = count > 0 ? `${count} unsaved change${count>1?'s':''}` : '';
+}
+
+async function applyGanttEditTable() {
+  if (!_getDirty.size) { showToast('No changes to apply'); return; }
+  const btn = document.querySelector('#gantt-edit-table-footer .btn-primary');
+  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+  let saved = 0;
+  for (const [tid, changes] of _getDirty) {
+    const payload = {...changes};
+    // Convert predecessor display row-numbers → stored IDs format
+    if (payload.depends_on !== undefined)
+      payload.depends_on = predFromInput(payload.depends_on, state.tasks);
+    if (payload.pct_complete !== undefined)
+      payload.pct_complete = Math.min(100, Math.max(0, parseInt(payload.pct_complete) || 0));
+    await patchTask(tid, payload);
+    saved++;
+  }
+  _getDirty.clear(); _getOrig.clear();
+  buildGanttEditTable();
+  showToast(`✓ ${saved} task${saved>1?'s':''} updated`);
+  if (btn) { btn.textContent = 'Apply Changes'; btn.disabled = false; }
+}
+
+function resetGanttEditTable() {
+  _getDirty.clear();
+  // Restore all inputs/selects to original values
+  const wrap = document.getElementById('gantt-edit-table-wrap');
+  if (!wrap) return;
+  wrap.querySelectorAll('.get-input').forEach(el => {
+    const tid = parseInt(el.dataset.tid);
+    const field = el.dataset.field;
+    const orig = _getOrig.get(tid);
+    if (!orig) return;
+    if (field === 'depends_on') {
+      el.value = predToDisplay(orig.depends_on);
+    } else {
+      el.value = orig[field] ?? '';
+    }
+    el.classList.remove('dirty');
+  });
+  _getUpdateDirtyCount();
+}
+
+
 function svgClientToLocal(svg, clientX, clientY) {
   const pt = svg.createSVGPoint();
   pt.x = clientX; pt.y = clientY;
