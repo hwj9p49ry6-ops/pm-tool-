@@ -186,6 +186,24 @@
   .gantt-dep-selected { stroke-width: 4 !important; opacity: 1 !important; filter: drop-shadow(0 0 4px rgba(29,78,216,.7)); }
   #gantt-sel-bar { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-light); }
   #gantt-sel-bar button { font-size:11px; height:22px; padding:0 7px; }
+  /* Gantt — Apple-style legend + status dots */
+  .gantt-status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; margin-right: 5px; }
+  #gantt-legend { display: flex; align-items: center; gap: 12px; padding: 5px 14px; background: var(--header-bg); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; font-size: 10px; color: var(--text-light); }
+  .gantt-legend-item { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .gantt-legend-box { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  /* Gantt edit panel */
+  #gantt-edit-panel { position: fixed; right: 0; top: 52px; bottom: 0; width: 300px; background: #fff; border-left: 1px solid var(--border); box-shadow: -4px 0 20px rgba(0,0,0,.1); z-index: 150; display: flex; flex-direction: column; transform: translateX(100%); transition: transform .2s ease; }
+  #gantt-edit-panel.open { transform: translateX(0); }
+  #gantt-edit-hdr { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0; }
+  #gantt-edit-hdr-title { font-size: 13px; font-weight: 700; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #gantt-edit-close { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-light); flex-shrink: 0; }
+  #gantt-edit-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .gantt-edit-field { display: flex; flex-direction: column; gap: 3px; }
+  .gantt-edit-field label { font-size: 10px; font-weight: 700; color: var(--text-light); text-transform: uppercase; letter-spacing: .05em; }
+  .gantt-edit-field input, .gantt-edit-field select, .gantt-edit-field textarea { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; font-family: var(--font); outline: none; width: 100%; background: var(--bg); color: var(--text); }
+  .gantt-edit-field input:focus, .gantt-edit-field select:focus, .gantt-edit-field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(74,144,226,.15); }
+  .gantt-edit-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  #gantt-edit-footer { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: space-between; flex-shrink: 0; }
   /* Color picker popover */
   #gantt-color-pop { display:none; position:fixed; background:#fff; border:1px solid var(--border); border-radius:10px; box-shadow:0 6px 24px rgba(0,0,0,.15); padding:12px; z-index:500; width:200px; }
   #gantt-color-pop.open { display:block; }
@@ -2219,6 +2237,20 @@ function renderGantt() {
           <button class="btn btn-ghost" style="font-size:11px;height:22px;padding:0 7px;" onclick="clearGanttSelection()">✕</button>
         </div>
       </div>
+      <div id="gantt-legend">
+        <span style="font-weight:700;text-transform:uppercase;letter-spacing:.04em;">Status:</span>
+        <span class="gantt-legend-item"><span class="gantt-legend-box" style="background:#8e8e93"></span>Not Started</span>
+        <span class="gantt-legend-item"><span class="gantt-legend-box" style="background:#0a84ff"></span>In Progress</span>
+        <span class="gantt-legend-item"><span class="gantt-legend-box" style="background:#34c759"></span>Complete</span>
+        <span class="gantt-legend-item"><span class="gantt-legend-box" style="background:#ff375f"></span>Blocked</span>
+        <span class="gantt-legend-item"><span class="gantt-legend-box" style="background:#ff9f0a"></span>On Hold</span>
+        <span style="width:1px;background:var(--border);height:12px;"></span>
+        <span class="gantt-legend-item"><span class="gantt-legend-box" style="background:#5856d6;opacity:0.7;"></span>Parent rollup</span>
+        <span class="gantt-legend-item"><span class="gantt-legend-box" style="background:#ef4444;"></span>Critical path</span>
+        <span class="gantt-legend-item"><span style="width:10px;height:10px;border-radius:2px;transform:rotate(45deg);background:#8e8e93;display:inline-block;flex-shrink:0;"></span>Milestone</span>
+        <span style="width:1px;background:var(--border);height:12px;"></span>
+        <span class="gantt-legend-item" style="color:#ff9f0a;font-weight:700;">▲ Today</span>
+      </div>
       <div id="gantt-body">
         <div id="gantt-labels">
           <div id="gantt-labels-header">Task</div>
@@ -2251,20 +2283,26 @@ function buildGanttSVG() {
   </defs>
   <line id="gantt-rubber" x1="0" y1="0" x2="0" y2="0" stroke="#6366f1" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrow-link)" display="none" pointer-events="none" opacity="0.85"/>`;
 
-  // Weekend stripes
+  // Weekend stripes — very subtle
   for (let d = 0; d < totalDays; d++) {
     const date = new Date(start.getTime() + d * DAY_MS);
     if (date.getDay() === 0 || date.getDay() === 6)
-      html += `<rect x="${d*cw}" y="0" width="${cw}" height="${svgH}" fill="#f5f6f8" opacity="0.5"/>`;
+      html += `<rect x="${d*cw}" y="${HEADER_H}" width="${cw}" height="${svgH - HEADER_H}" fill="#f5f5f7" opacity="0.7"/>`;
   }
 
-  // Header background
-  html += `<rect x="0" y="0" width="${svgW}" height="${HEADER_H}" fill="#f8f9fb"/>`;
+  // Row alternation (every other task row gets a very slight tint)
+  displayList.forEach((_, i) => {
+    if (i % 2 === 1) {
+      const ry = HEADER_H + i * TASK_ROW_H;
+      html += `<rect x="0" y="${ry}" width="${svgW}" height="${TASK_ROW_H}" fill="#f9f9fb" opacity="0.5"/>`;
+    }
+  });
 
-  // Row separator
-  html += `<line x1="0" y1="28" x2="${svgW}" y2="28" stroke="#e0e4ec" stroke-width="0.5"/>`;
+  // Header background (two tiers: month top half, day bottom half)
+  html += `<rect x="0" y="0" width="${svgW}" height="${HEADER_H}" fill="#f5f5f7"/>`;
+  html += `<line x1="0" y1="${HEADER_H/2}" x2="${svgW}" y2="${HEADER_H/2}" stroke="#d2d2d7" stroke-width="0.5"/>`;
 
-  // Month labels (top row, y=20)
+  // Month labels (top half of header, y=16)
   let curMonth = -1, monthStartX = 0;
   for (let d = 0; d <= totalDays; d++) {
     const date = new Date(start.getTime() + d * DAY_MS);
@@ -2277,15 +2315,15 @@ function buildGanttSVG() {
           ? labelDate.toLocaleString('default', {month:'short'})
           : labelDate.toLocaleString('default', {month:'short', year:'2-digit'});
         if (monthW >= 20) {
-          html += `<text x="${monthStartX+6}" y="20" font-size="11" font-weight="600" fill="#6b7280" font-family="-apple-system,sans-serif">${lbl}</text>`;
+          html += `<text x="${monthStartX + 8}" y="17" font-size="11" font-weight="700" fill="#1d1d1f" font-family="-apple-system,'SF Pro Text',sans-serif" letter-spacing="-0.01em">${lbl}</text>`;
         }
-        html += `<line x1="${monthStartX}" y1="0" x2="${monthStartX}" y2="${HEADER_H}" stroke="#d1d5db"/>`;
+        html += `<line x1="${monthStartX}" y1="0" x2="${monthStartX}" y2="${HEADER_H}" stroke="#d2d2d7"/>`;
       }
       curMonth = m; monthStartX = d * cw;
     }
   }
 
-  // Day labels (bottom row, y=44)
+  // Day labels (bottom half of header, y=40)
   const DOWS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
   for (let d = 0; d < totalDays; d++) {
     const date = new Date(start.getTime() + d * DAY_MS);
@@ -2295,30 +2333,38 @@ function buildGanttSVG() {
     const cx = d * cw + cw / 2;
 
     if (state.ganttZoom === 'day') {
-      // Every column: DOW letter at y=38, date number at y=46
-      const fgColor = isWeekend ? '#c0c4cc' : '#6b7280';
-      const numColor = isWeekend ? '#c0c4cc' : '#374151';
-      html += `<text x="${cx}" y="39" font-size="9" text-anchor="middle" fill="${fgColor}" font-family="-apple-system,sans-serif">${DOWS[dow][0]}</text>`;
-      html += `<text x="${cx}" y="${HEADER_H-2}" font-size="11" font-weight="500" text-anchor="middle" fill="${numColor}" font-family="-apple-system,sans-serif">${dom}</text>`;
+      const fgColor = isWeekend ? '#aeaeb2' : '#86868b';
+      const numColor = isWeekend ? '#aeaeb2' : '#1d1d1f';
+      html += `<text x="${cx}" y="33" font-size="9" text-anchor="middle" fill="${fgColor}" font-family="-apple-system,sans-serif">${DOWS[dow][0]}</text>`;
+      html += `<text x="${cx}" y="${HEADER_H - 3}" font-size="11" font-weight="500" text-anchor="middle" fill="${numColor}" font-family="-apple-system,sans-serif">${dom}</text>`;
     } else {
-      // week: every day; month: every 7 (skip dom===1 to avoid clash with month label); quarter: every 14
       const show = (state.ganttZoom==='week') ||
                    (state.ganttZoom==='month' && dom%7===1 && dom!==1) ||
                    (state.ganttZoom==='quarter' && dom%14===1);
       if (show && (totalDays - d) >= 2) {
-        html += `<text x="${cx}" y="${HEADER_H-5}" font-size="10" text-anchor="middle" fill="#9ca3af" font-family="-apple-system,sans-serif">${dom}</text>`;
+        html += `<text x="${cx}" y="${HEADER_H - 5}" font-size="10" text-anchor="middle" fill="#86868b" font-family="-apple-system,sans-serif">${dom}</text>`;
       }
     }
-    html += `<line x1="${d*cw}" y1="${HEADER_H-8}" x2="${d*cw}" y2="${HEADER_H}" stroke="#e0e4ec" stroke-width="0.5"/>`;
+    if (d > 0) html += `<line x1="${d*cw}" y1="${HEADER_H/2}" x2="${d*cw}" y2="${HEADER_H}" stroke="#e5e5ea" stroke-width="0.5"/>`;
   }
+  // Bottom header border
+  html += `<line x1="0" y1="${HEADER_H}" x2="${svgW}" y2="${HEADER_H}" stroke="#d2d2d7"/>`;
 
-  // Today marker
+  // Today marker — amber/orange, prominent, with label
   const today = new Date(); today.setHours(0,0,0,0);
   const todayOff = daysBetween(start, today);
   if (todayOff >= 0 && todayOff <= totalDays) {
     const tx = todayOff * cw + cw/2;
-    html += `<line x1="${tx}" y1="0" x2="${tx}" y2="${svgH}" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.7"/>`;
-    html += `<circle cx="${tx}" cy="${HEADER_H/2}" r="4" fill="#ef4444" opacity="0.8"/>`;
+    html += `<rect x="${tx-0.75}" y="${HEADER_H}" width="1.5" height="${svgH - HEADER_H}" fill="#ff9f0a" opacity="0.55"/>`;
+    // Triangle marker at top
+    html += `<polygon points="${tx},${HEADER_H+1} ${tx-5},${HEADER_H-7} ${tx+5},${HEADER_H-7}" fill="#ff9f0a"/>`;
+    // "Today" pill label
+    if (cw >= 16) {
+      const todayLbl = 'Today';
+      const lblW = 34;
+      html += `<rect x="${tx - lblW/2}" y="3" width="${lblW}" height="14" rx="3" fill="#ff9f0a"/>`;
+      html += `<text x="${tx}" y="14" font-size="9" font-weight="700" text-anchor="middle" fill="#fff" font-family="-apple-system,sans-serif" pointer-events="none">${todayLbl}</text>`;
+    }
   }
 
   // Row lines + bars (iterate displayList)
@@ -2357,30 +2403,40 @@ function buildGanttSVG() {
     if (isMilestone) {
       const cx = xOff * cw + cw / 2;
       const cy = rowY + TASK_ROW_H / 2;
-      const r = 10;
-      // Pentagon pointing up (5 points, top vertex at -90°)
-      const pts = Array.from({length:5}, (_,k) => {
-        const a = Math.PI * (-0.5 + 2*k/5);
-        return `${(cx + r*Math.cos(a)).toFixed(1)},${(cy + r*Math.sin(a)).toFixed(1)}`;
-      }).join(' ');
-      html += `<polygon class="gantt-bar" data-tid="${t.id}" points="${pts}"
-        fill="${color}" opacity="0.9" cursor="pointer" title="${esc(t.name)}"/>`;
-      // Vertical tick through center
-      html += `<line x1="${cx}" y1="${cy-r-4}" x2="${cx}" y2="${cy+r+4}" stroke="${color}" stroke-width="1.5" opacity="0.5" pointer-events="none"/>`;
-      html += `<text data-tid="${t.id}" x="${cx + r + 6}" y="${cy + 4}" font-size="11" fill="${color}" font-weight="600" font-family="-apple-system,sans-serif" pointer-events="none">${esc(t.name)}</text>`;
+      const r = 9;
+      // Diamond (rotated square) — Apple-style milestone marker
+      html += `<line x1="${cx}" y1="${cy-r-6}" x2="${cx}" y2="${cy+r+6}" stroke="${color}" stroke-width="1" stroke-dasharray="2,2" opacity="0.4" pointer-events="none"/>`;
+      html += `<rect class="gantt-bar" data-tid="${t.id}" x="${cx-r*0.707}" y="${cy-r*0.707}" width="${r*1.414}" height="${r*1.414}" rx="2" transform="rotate(45,${cx},${cy})"
+        fill="${color}" opacity="0.9" cursor="pointer"/>`;
+      // Label pill above diamond
+      if (cw >= 12) {
+        const nameShort = t.name.length > 18 ? t.name.slice(0,17)+'…' : t.name;
+        const lblW = Math.min(nameShort.length * 6.2 + 12, 140);
+        html += `<rect x="${cx - lblW/2}" y="${cy-r-22}" width="${lblW}" height="14" rx="4" fill="${color}" opacity="0.15" pointer-events="none"/>`;
+        html += `<text data-tid="${t.id}" x="${cx}" y="${cy-r-11}" font-size="10" font-weight="700" text-anchor="middle" fill="${color}" font-family="-apple-system,'SF Pro Text',sans-serif" pointer-events="none">${esc(nameShort)}</text>`;
+      }
     } else {
       const ed = strToDate(t.end_date); if (!ed) return;
       const x = xOff * cw;
       const w = Math.max(1, daysBetween(sd, ed) + 1) * cw;
       const barY = rowY + BAR_Y_OFFSET;
-      html += `<rect class="gantt-bar" data-tid="${t.id}" x="${x}" y="${barY}" width="${w}" height="${BAR_H}" rx="4" fill="${color}" opacity="0.85" cursor="move"/>`;
+      // Main bar
+      html += `<rect class="gantt-bar" data-tid="${t.id}" x="${x}" y="${barY}" width="${w}" height="${BAR_H}" rx="5" fill="${color}" opacity="0.9" cursor="move"/>`;
+      // Progress fill (solid left portion, darker)
       if (t.pct_complete > 0) {
-        const fw = (t.pct_complete / 100) * w;
-        html += `<rect x="${x}" y="${barY}" width="${fw}" height="${BAR_H}" rx="4" fill="${color}" opacity="0.4" pointer-events="none"/>`;
+        const fw = Math.max(0, (t.pct_complete / 100) * w);
+        html += `<rect x="${x}" y="${barY}" width="${fw}" height="${BAR_H}" rx="5" fill="rgba(0,0,0,0.18)" pointer-events="none"/>`;
       }
-      if (w > 40) html += `<text data-tid="${t.id}" x="${x+w/2}" y="${barY+BAR_H/2+4}" text-anchor="middle" font-size="11" fill="white" font-weight="500" font-family="-apple-system,sans-serif" pointer-events="none">${esc(t.name)}</text>`;
-      html += `<rect class="gantt-resize" data-tid="${t.id}" x="${x+w-6}" y="${barY}" width="6" height="${BAR_H}" fill="rgba(0,0,0,0.15)" cursor="ew-resize"/>`;
-      // Baseline bar (thin grey bar below current bar)
+      // Text label (short name centered, white bold)
+      if (w > 36) {
+        const nameShort = t.name.length > 20 ? t.name.slice(0,19)+'…' : t.name;
+        html += `<text data-tid="${t.id}" x="${x+w/2}" y="${barY+BAR_H/2+4}" text-anchor="middle" font-size="10" fill="white" font-weight="700"
+          font-family="-apple-system,'SF Pro Text',sans-serif" pointer-events="none"
+          style="text-shadow:0 1px 2px rgba(0,0,0,0.35)">${esc(nameShort)}</text>`;
+      }
+      // Resize handle
+      html += `<rect class="gantt-resize" data-tid="${t.id}" x="${x+w-6}" y="${barY}" width="6" height="${BAR_H}" fill="rgba(0,0,0,0.12)" rx="0 5 5 0" cursor="ew-resize"/>`;
+      // Baseline bar
       if (state.showBaseline && t.baseline_start && t.baseline_end) {
         const bsd = strToDate(t.baseline_start), bed = strToDate(t.baseline_end);
         if (bsd && bed) {
@@ -2445,13 +2501,16 @@ function buildGanttSVG() {
     if (srcBar) { srcBar.setAttribute('stroke','#6366f1'); srcBar.setAttribute('stroke-width','3'); srcBar.classList.add('gantt-link-source'); }
   }
 
-  // Label column — use displayList for indented labels + toggle
+  // Label column — status dot + owner initials + indented labels + toggle
   document.getElementById('gantt-label-rows').innerHTML = displayList.map(entry => {
     const { task: t, level, isParent, collapsed } = entry;
     const pad = 12 + level * 16;
-    const toggle = isParent ? `<span style="cursor:pointer;font-size:9px;margin-right:3px;" onclick="ganttToggleCollapse(${t.id})">${collapsed?'▶':'▼'}</span>` : '<span style="width:14px;display:inline-block;"></span>';
-    return `<div class="gantt-label-row" style="padding-left:${pad}px;" title="${esc(t.name)}">
-      ${toggle}<span class="gantt-label-name">${esc(t.name)}</span>
+    const toggle = isParent ? `<span style="cursor:pointer;font-size:9px;margin-right:3px;flex-shrink:0;" onclick="ganttToggleCollapse(${t.id})">${collapsed?'▶':'▼'}</span>` : '<span style="width:14px;display:inline-block;flex-shrink:0;"></span>';
+    const dotColor = GANTT_STATUS_COLORS[t.status] || '#8e8e93';
+    const ownerInitials = t.owner ? t.owner.split(/\s+/).filter(Boolean).map(w => w[0]).join('').slice(0,2).toUpperCase() : '';
+    return `<div class="gantt-label-row" style="padding-left:${pad}px;" title="${esc(t.name)} · ${t.owner||'Unassigned'} · ${t.status||''}">
+      ${toggle}<span class="gantt-status-dot" style="background:${dotColor}"></span><span class="gantt-label-name">${esc(t.name)}</span>
+      ${ownerInitials ? `<span style="font-size:9px;font-weight:700;color:var(--text-light);flex-shrink:0;padding:0 5px;" title="${esc(t.owner)}">${ownerInitials}</span>` : ''}
       <span class="gantt-del-btn" title="Delete task" onclick="event.stopPropagation(); if(confirm('Delete task \\u201c${esc(t.name).replace(/'/g,"\\'")}\\u201d?')) deleteTask(${t.id})">×</span>
     </div>`;
   }).join('');
@@ -2659,7 +2718,7 @@ function setupGanttDrag(rangeStart, cw) {
       dragAC.abort();
       const deltaDays = Math.round((e.clientX - dragging.startX) / cw);
       if (deltaDays === 0) {
-        // Click (no drag) → select bar
+        // Click (no drag) → select bar + open edit panel
         _ganttSelected = { type: 'bar', tid: dragging.tid };
         const svg = document.getElementById('gantt-svg');
         if (svg) {
@@ -2668,6 +2727,7 @@ function setupGanttDrag(rangeStart, cw) {
           if (barEl) barEl.classList.add('gantt-bar-selected');
         }
         updateGanttSelBar();
+        openGanttTaskEdit(dragging.tid);
         return;
       }
       let newStart = dragging.origStart, newEnd = dragging.origEnd, newDur = null;
@@ -2787,8 +2847,16 @@ const GANTT_PALETTE = [
 let _ganttSelected = null;  // { type:'bar', tid } | { type:'dep', key, fromTid, toTid }
 let _ganttColorTid = null;  // tid whose color popover is open
 
+const GANTT_STATUS_COLORS = {
+  'Not Started': '#8e8e93',
+  'In Progress': '#0a84ff',
+  'Complete':    '#34c759',
+  'Blocked':     '#ff375f',
+  'On Hold':     '#ff9f0a',
+};
 function getTaskColor(t) {
-  return (t.color && t.color !== '') ? t.color : GANTT_PALETTE[t.id % GANTT_PALETTE.length];
+  if (t.color && t.color !== '') return t.color;
+  return GANTT_STATUS_COLORS[t.status] || '#0a84ff';
 }
 
 function updateGanttSelBar() {
@@ -4018,6 +4086,49 @@ function toggleCriticalPath() {
 let _aiChatHistory = [];   // [{role:'user'|'assistant', content:'...'}]
 let _aiHighlightIds = new Set();  // task IDs to highlight from AI (non-critical-path)
 
+// ═══════════════════════════════════════════════════════════
+// GANTT TASK EDIT PANEL
+// ═══════════════════════════════════════════════════════════
+let _ganttEditTid = null;
+
+function openGanttTaskEdit(tid) {
+  _ganttEditTid = tid;
+  const task = state.tasks.find(t => t.id === tid);
+  if (!task) return;
+  document.getElementById('gantt-edit-hdr-title').textContent = task.name || 'Edit Task';
+  document.getElementById('gantt-edit-name').value  = task.name || '';
+  document.getElementById('gantt-edit-start').value = task.start_date || '';
+  document.getElementById('gantt-edit-end').value   = task.end_date || '';
+  document.getElementById('gantt-edit-status').value   = task.status || 'Not Started';
+  document.getElementById('gantt-edit-priority').value = task.priority || 'Medium';
+  document.getElementById('gantt-edit-owner').value = task.owner || '';
+  document.getElementById('gantt-edit-pct').value   = task.pct_complete ?? 0;
+  document.getElementById('gantt-edit-notes').value = task.notes || '';
+  document.getElementById('gantt-edit-panel').classList.add('open');
+  document.getElementById('gantt-edit-name').focus();
+}
+
+function closeGanttTaskEdit() {
+  document.getElementById('gantt-edit-panel').classList.remove('open');
+  _ganttEditTid = null;
+}
+
+async function saveGanttTaskEdit() {
+  if (!_ganttEditTid) return;
+  const updates = {
+    name:         document.getElementById('gantt-edit-name').value.trim(),
+    start_date:   document.getElementById('gantt-edit-start').value,
+    end_date:     document.getElementById('gantt-edit-end').value,
+    status:       document.getElementById('gantt-edit-status').value,
+    priority:     document.getElementById('gantt-edit-priority').value,
+    owner:        document.getElementById('gantt-edit-owner').value.trim(),
+    pct_complete: parseInt(document.getElementById('gantt-edit-pct').value) || 0,
+    notes:        document.getElementById('gantt-edit-notes').value.trim(),
+  };
+  closeGanttTaskEdit();
+  await patchTask(_ganttEditTid, updates);
+}
+
 function openAIChat() {
   if (!state.activeProjectId) { showToast('Select a project first'); return; }
   document.getElementById('ai-chat-panel').classList.add('open');
@@ -4831,6 +4942,70 @@ async function maybeCheckAuth() {
 </div>
 
 
+
+<!-- Gantt Task Edit Panel -->
+<div id="gantt-edit-panel">
+  <div id="gantt-edit-hdr">
+    <span id="gantt-edit-hdr-title">Edit Task</span>
+    <button id="gantt-edit-close" onclick="closeGanttTaskEdit()" title="Close">×</button>
+  </div>
+  <div id="gantt-edit-body">
+    <div class="gantt-edit-field">
+      <label>Task Name</label>
+      <input id="gantt-edit-name" type="text" placeholder="Task name">
+    </div>
+    <div class="gantt-edit-row2">
+      <div class="gantt-edit-field">
+        <label>Start Date</label>
+        <input id="gantt-edit-start" type="date">
+      </div>
+      <div class="gantt-edit-field">
+        <label>End Date</label>
+        <input id="gantt-edit-end" type="date">
+      </div>
+    </div>
+    <div class="gantt-edit-row2">
+      <div class="gantt-edit-field">
+        <label>Status</label>
+        <select id="gantt-edit-status">
+          <option>Not Started</option>
+          <option>In Progress</option>
+          <option>Complete</option>
+          <option>Blocked</option>
+          <option>On Hold</option>
+        </select>
+      </div>
+      <div class="gantt-edit-field">
+        <label>Priority</label>
+        <select id="gantt-edit-priority">
+          <option>Low</option>
+          <option>Medium</option>
+          <option>High</option>
+          <option>Critical</option>
+        </select>
+      </div>
+    </div>
+    <div class="gantt-edit-field">
+      <label>Owner</label>
+      <input id="gantt-edit-owner" type="text" placeholder="Owner name">
+    </div>
+    <div class="gantt-edit-field">
+      <label>% Complete</label>
+      <input id="gantt-edit-pct" type="number" min="0" max="100" step="5" placeholder="0">
+    </div>
+    <div class="gantt-edit-field">
+      <label>Notes</label>
+      <textarea id="gantt-edit-notes" rows="3" placeholder="Notes…"></textarea>
+    </div>
+  </div>
+  <div id="gantt-edit-footer">
+    <button class="btn btn-ghost" onclick="closeGanttTaskEdit(); switchView('grid');" title="Switch to Grid view to see all fields">↔ Grid View</button>
+    <div style="display:flex;gap:6px;">
+      <button class="btn btn-ghost" onclick="closeGanttTaskEdit()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveGanttTaskEdit()">Save</button>
+    </div>
+  </div>
+</div>
 
 <!-- AI Chat Panel -->
 <div id="ai-chat-panel">
