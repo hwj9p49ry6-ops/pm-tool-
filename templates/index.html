@@ -550,6 +550,7 @@
 
 <div id="header">
   <h1>📋 Project Manager</h1>
+  <input type="file" id="import-project-input" accept=".xlsx,.csv" style="display:none" onchange="importProjectFromFile(this)">
   <button class="btn btn-primary" onclick="openNewProjectModal()">+ New Project</button>
 </div>
 
@@ -634,6 +635,7 @@
     <div class="field"><label>Color</label><input type="color" id="modal-color" value="#4A90E2"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-ghost" onclick="document.getElementById('import-project-input').click();closeModal();" title="Create project from Excel or CSV file">⬆ Import from file</button>
       <button class="btn btn-primary" onclick="saveNewProject()">Create</button>
     </div>
   </div>
@@ -701,6 +703,19 @@ function addBusinessDays(dateStr, n) {
     if (dow !== 0 && dow !== 6) remaining--;  // skip Sat(6) and Sun(0)
   }
   return dateToStr(cur);
+}
+
+// Advance a date string to the next Monday if it falls on Sat or Sun.
+// Always applied to dependency-computed start dates so tasks never
+// begin on a weekend regardless of businessDaysMode.
+function nextWorkday(dateStr) {
+  if (!dateStr) return dateStr;
+  const d = strToDate(dateStr);
+  if (!d) return dateStr;
+  const dow = d.getDay();
+  if (dow === 6) return dateToStr(new Date(d.getTime() + 2 * DAY_MS)); // Sat → Mon
+  if (dow === 0) return dateToStr(new Date(d.getTime() + 1 * DAY_MS)); // Sun → Mon
+  return dateStr;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -777,15 +792,15 @@ function autoCompute(task, changedField, tasks) {
     const predTask = tasks.find(t => t.id === p.taskId);
     if (predTask) {
       if (p.type === 'FS' && predTask.end_date) {
-        // FS: successor starts day after predecessor ends
-        const newStart = addDays(predTask.end_date, 1 + p.lag);
+        // FS: successor starts day after predecessor ends, skip to Monday if weekend
+        const newStart = nextWorkday(addDays(predTask.end_date, 1 + p.lag));
         if (newStart !== task.start_date) {
           updates.start_date = newStart;
           if (hasDur) updates.end_date = addDays(newStart, dur - 1);
         }
       } else if (p.type === 'SS' && predTask.start_date) {
-        // SS: successor starts when predecessor starts (+ lag)
-        const newStart = addDays(predTask.start_date, p.lag);
+        // SS: successor starts when predecessor starts (+ lag), skip to Monday if weekend
+        const newStart = nextWorkday(addDays(predTask.start_date, p.lag));
         if (newStart !== task.start_date) {
           updates.start_date = newStart;
           if (hasDur) updates.end_date = addDays(newStart, dur - 1);
@@ -1462,12 +1477,21 @@ async function patchTask(tid, updates) {
   const updated = await api.put(`/api/tasks/${tid}`, updates);
   const i = state.tasks.findIndex(t => t.id === tid);
   if (i >= 0) state.tasks[i] = updated;
+  // Apply server-side schedule propagation results
+  if (updated._propagated && updated._propagated.length) {
+    updated._propagated.forEach(p => {
+      const j = state.tasks.findIndex(t => t.id === p.id);
+      if (j >= 0) { state.tasks[j].start_date = p.start_date; state.tasks[j].end_date = p.end_date; }
+    });
+    showToast(`↳ ${updated._propagated.length} dependent task${updated._propagated.length > 1 ? 's' : ''} rescheduled`);
+  }
   // Auto-push schedule changes to Radar in background (fire-and-forget)
   const radarFields = ['name', 'notes', 'start_date', 'end_date', 'priority', 'owner', 'status'];
   if (updated.radar_id && Object.keys(updates).some(k => radarFields.includes(k))) {
     api.post(`/api/tasks/${tid}/push-to-radar`, {}).catch(() => {});
   }
   if (state.activeView === 'gantt') renderGantt();
+  else if (state.activeView === 'grid') renderTaskRows();
 }
 
 // ── Forward scheduling: propagate date changes to all successors ─────────────
@@ -1490,7 +1514,7 @@ async function propagateSchedule(rootTid) {
   });
 
   const changed = new Map(); // tid → {start_date, end_date}
-  const queue = [...(succMap[rootTid] || []).map(s => s.tid)];
+  const queue = [rootTid];  // start from rootTid itself so it gets checked against its own predecessors
   const visited = new Set();
 
   while (queue.length) {
@@ -1510,10 +1534,11 @@ async function propagateSchedule(rootTid) {
       let candidateStart;
       switch ((p.type || 'FS').toUpperCase()) {
         case 'FS': candidateStart = addDays(pred.end_date,   1 + lag);       break;
-        case 'SS': candidateStart = addDays(pred.start_date, lag);           break;
-        case 'FF': candidateStart = addDays(pred.end_date,   lag - dur);     break;
-        case 'SF': candidateStart = addDays(pred.start_date, lag - dur);     break;
-        default:   candidateStart = addDays(pred.end_date,   1 + lag);
+        case 'FS': candidateStart = nextWorkday(addDays(pred.end_date,   1 + lag));   break;
+        case 'SS': candidateStart = nextWorkday(addDays(pred.start_date, lag));       break;
+        case 'FF': candidateStart = addDays(pred.end_date,   lag - dur);              break;
+        case 'SF': candidateStart = addDays(pred.start_date, lag - dur);              break;
+        default:   candidateStart = nextWorkday(addDays(pred.end_date,   1 + lag));
       }
       if (!earliestStart || candidateStart > earliestStart) earliestStart = candidateStart;
     });
@@ -1543,6 +1568,7 @@ async function propagateSchedule(rootTid) {
 }
 
 
+async function addTask() {
   const task = await api.post(`/api/projects/${state.activeProjectId}/tasks`, {});
   state.tasks.push(task);
   // Always switch to grid so user can fill in task details
@@ -1812,7 +1838,8 @@ function downloadTemplate() {
 
 async function uploadExcel(input) {
   const file = input.files[0];
-  if (!file || !state.activeProjectId) return;
+  if (!file) return;
+  if (!state.activeProjectId) { showToast('Select a project first, or use "⬆ Import Project" in the header'); input.value = ''; return; }
   input.value = '';  // reset so same file can be re-uploaded
 
   showToast('⏳ Importing…');
@@ -1840,6 +1867,76 @@ async function uploadExcel(input) {
     showToast('✗ Upload failed: ' + e.message);
   }
 }
+
+// Import a project from Excel or CSV — creates a new project then loads the file into it
+async function importProjectFromFile(input) {
+  const file = input.files[0];
+  input.value = '';
+  if (!file) return;
+
+  // Suggest project name from filename (strip extension)
+  const suggested = file.name.replace(/\.(xlsx|csv)$/i, '').replace(/[-_]+/g, ' ').trim();
+  const name = prompt('Project name for this import:', suggested || 'New Project');
+  if (!name || !name.trim()) return;
+
+  showToast('⏳ Creating project…');
+  let proj;
+  try {
+    proj = await api.post('/api/projects', { name: name.trim(), color: '#4A90E2' });
+    state.projects.push(proj);
+    renderSidebar();
+    await selectProject(proj.id);
+  } catch(e) {
+    showToast('✗ Could not create project: ' + e.message);
+    return;
+  }
+
+  // Now import the file
+  const isCSV = file.name.toLowerCase().endsWith('.csv');
+  showToast('⏳ Importing tasks…');
+  try {
+    let result;
+    if (isCSV) {
+      // Parse CSV client-side and post to CSV import endpoint
+      const text = await file.text();
+      const lines = text.split(/\r?\n/);
+      const parseCSVLine = l => { /* same parser as uploadCSV */ const vals = []; let cur = ''; let inQ = false; for (const c of l) { if (c === '"') { inQ = !inQ; } else if (c === ',' && !inQ) { vals.push(cur); cur = ''; } else cur += c; } vals.push(cur); return vals.map(v => v.replace(/^"|"$/g,'').replace(/""/g,'"')); };
+      const headers = parseCSVLine(lines[0] || '');
+      const col = name => headers.indexOf(name);
+      const rows = lines.slice(1).map(l => parseCSVLine(l));
+      const taskRows = rows.map((r, i) => ({
+        row_ref: parseInt(r[col('Row #')]) || i+1,
+        name: r[col('Task Name')] || r[col('Task Name *')] || '',
+        owner: r[col('Owner')] || '',
+        status: r[col('Status')] || 'Not Started',
+        priority: r[col('Priority')] || 'Medium',
+        start_date: r[col('Start Date')] || '',
+        end_date: r[col('End Date')] || '',
+        duration: r[col('Duration')] || r[col('Duration (days)')] || '',
+        pct_complete: r[col('% Done')] || '0',
+        predecessor: r[col('Predecessor')] || '',
+        parent_row: r[col('Parent Row #')] || '',
+        notes: r[col('Notes')] || '',
+        radar_id: r[col('Radar ID')] || '',
+        task_id: parseInt(r[col('Task ID')]) || null,
+      })).filter(r => r.name);
+      result = await api.post(`/api/projects/${proj.id}/import/csv`, taskRows);
+      showToast(`✓ ${result.created} tasks imported into "${name.trim()}"`);
+    } else {
+      const form = new FormData();
+      form.append('file', file);
+      const resp = await fetch(`/api/projects/${proj.id}/import/excel`, { method: 'POST', body: form });
+      result = await resp.json();
+      if (!resp.ok || result.error) { showToast('✗ ' + (result.error || 'Import failed')); return; }
+      showToast(`✓ ${result.created} tasks imported into "${name.trim()}"`);
+    }
+    state.tasks = await api.get(`/api/projects/${proj.id}/tasks`);
+    renderView();
+  } catch(e) {
+    showToast('✗ Import failed: ' + e.message);
+  }
+}
+
 async function ctxToggleMilestone() {
   document.getElementById('ctx-menu').style.display = 'none';
   if (!ctxTid) return;
@@ -2471,9 +2568,10 @@ function setupGanttDrag(rangeStart, cw) {
             undoStack.push({ type: 'link', toTid: tid, oldDependsOn });
             if (undoStack.length > 20) undoStack.shift();
             await api.put(`/api/tasks/${tid}`, { depends_on: toTask.depends_on });
+            // Reload all tasks from server so propagated dates are reflected
+            state.tasks = await api.get(`/api/projects/${state.activeProjectId}/tasks`);
             buildGanttSVG();
-            propagateSchedule(tid);
-            showToast(`✓ ${linkType} dependency created — Cmd+Z to undo`);
+            showToast(`✓ ${linkType} dependency created — tasks rescheduled`);
           }
         })();
       }
@@ -2553,9 +2651,15 @@ function setupGanttDrag(rangeStart, cw) {
       }
       const t = state.tasks.find(t => t.id === dragging.tid);
       if (t) { t.start_date = newStart; t.end_date = newEnd; if (newDur) t.duration = newDur; }
-      await api.put(`/api/tasks/${dragging.tid}`, { start_date: newStart, end_date: newEnd, ...(newDur ? {duration: newDur} : {}) });
+      const dragResult = await api.put(`/api/tasks/${dragging.tid}`, { start_date: newStart, end_date: newEnd, ...(newDur ? {duration: newDur} : {}) });
+      if (dragResult._propagated && dragResult._propagated.length) {
+        dragResult._propagated.forEach(p => {
+          const j = state.tasks.findIndex(t => t.id === p.id);
+          if (j >= 0) { state.tasks[j].start_date = p.start_date; state.tasks[j].end_date = p.end_date; }
+        });
+        showToast(`↳ ${dragResult._propagated.length} dependent task${dragResult._propagated.length > 1 ? 's' : ''} rescheduled`);
+      }
       buildGanttSVG();
-      propagateSchedule(dragging.tid);
     }, { signal: dragAC.signal, once: true });
 
   }, { signal: svgAC.signal });

@@ -5,12 +5,27 @@ import sqlite3
 import io
 import hashlib
 import secrets
+import re as _re
+from datetime import date, timedelta
 
 from flask import Flask, jsonify, request, render_template, g, send_file
 
+# Ensure we can find db.py and integrations when run from any cwd
+_HERE = os.path.dirname(__file__)
+_ROOT = os.path.abspath(os.path.join(_HERE, '..', '..'))
+sys.path.insert(0, _HERE)
+sys.path.insert(0, _ROOT)
+from db import init_db, get_db
+
+# Use Apple corporate CA bundle so Floodgate SSL works off-VPN
+_APPLE_CA = os.path.expanduser('~/.claude/apple/certs/bundle.pem')
+if os.path.exists(_APPLE_CA) and not os.environ.get('REQUESTS_CA_BUNDLE'):
+    os.environ['REQUESTS_CA_BUNDLE'] = _APPLE_CA
+    os.environ['SSL_CERT_FILE'] = _APPLE_CA
+
 app = Flask(__name__, template_folder='templates')
-app.config['DATABASE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pm.db')
-app.secret_key = 'dev-secret-key'
+app.config['DATABASE'] = os.path.join(os.path.dirname(__file__), 'pm.db')
+app.secret_key = os.environ.get('PM_SECRET_KEY', 'dev-secret-key-change-in-production')
 
 
 @app.teardown_appcontext
@@ -132,6 +147,152 @@ def create_task(pid):
     return jsonify(dict(row)), 201
 
 
+def _next_workday(d):
+    """Advance a date to Monday if it falls on Saturday or Sunday."""
+    if d.weekday() == 5:   # Saturday
+        return d + timedelta(days=2)
+    if d.weekday() == 6:   # Sunday
+        return d + timedelta(days=1)
+    return d
+
+
+def _parse_predecessors(depends_on):
+    """Return list of {task_id, type, lag_days} dicts."""
+    if not depends_on:
+        return []
+    result = []
+    for part in depends_on.split(','):
+        part = part.strip()
+        m = _re.match(r'^(\d+)(FS|SS|FF|SF)?([+-]\d+[dw])?$', part, _re.I)
+        if not m:
+            continue
+        task_id = int(m.group(1))
+        dep_type = (m.group(2) or 'FS').upper()
+        lag_str = m.group(3) or ''
+        lag_days = 0
+        if lag_str:
+            sign = 1 if lag_str[0] == '+' else -1
+            n = int(_re.search(r'\d+', lag_str).group())
+            lag_days = sign * (n * 7 if lag_str[-1].lower() == 'w' else n)
+        result.append({'task_id': task_id, 'type': dep_type, 'lag': lag_days})
+    return result
+
+
+def _propagate_schedule(db, root_tid):
+    """
+    Forward-schedule all tasks downstream of root_tid.
+    Returns a list of {id, start_date, end_date} for every task that moved.
+    Rules:
+      FS  successor.start = predecessor.end + 1 day + lag  (skip weekends)
+      SS  successor.start = predecessor.start + lag         (skip weekends)
+      FF  successor.end   = predecessor.end + lag
+      SF  successor.end   = predecessor.start + lag
+    Only pushes tasks forward (never backward).
+    """
+    # Load all tasks for the project that owns root_tid
+    proj_row = db.execute(
+        "SELECT project_id FROM tasks WHERE id=?", (root_tid,)
+    ).fetchone()
+    if not proj_row:
+        return []
+    pid = proj_row['project_id']
+    rows = db.execute(
+        "SELECT * FROM tasks WHERE project_id=?", (pid,)
+    ).fetchall()
+    tasks = {r['id']: dict(r) for r in rows}
+
+    # Build successor map: succ_map[pred_id] → [{tid, type, lag}]
+    succ_map = {tid: [] for tid in tasks}
+    for t in tasks.values():
+        for p in _parse_predecessors(t.get('depends_on', '')):
+            if p['task_id'] in tasks:
+                succ_map[p['task_id']].append(
+                    {'tid': t['id'], 'type': p['type'], 'lag': p['lag']}
+                )
+
+    changed = {}
+    queue = [root_tid]
+    visited = set()
+
+    while queue:
+        tid = queue.pop(0)
+        if tid in visited:
+            continue
+        visited.add(tid)
+        t = tasks.get(tid)
+        if not t:
+            continue
+
+        earliest = None
+        for p in _parse_predecessors(t.get('depends_on', '')):
+            pred = tasks.get(p['task_id'])
+            if not pred:
+                continue
+            lag = p['lag']
+            try:
+                if p['type'] == 'FS' and pred.get('end_date'):
+                    pred_end = date.fromisoformat(pred['end_date'])
+                    cand = _next_workday(pred_end + timedelta(days=1 + lag))
+                elif p['type'] == 'SS' and pred.get('start_date'):
+                    pred_start = date.fromisoformat(pred['start_date'])
+                    cand = _next_workday(pred_start + timedelta(days=lag))
+                elif p['type'] == 'FF' and pred.get('end_date'):
+                    pred_end = date.fromisoformat(pred['end_date'])
+                    cand = pred_end + timedelta(days=lag)
+                    # derive start from duration
+                    if t.get('start_date') and t.get('end_date'):
+                        dur = (date.fromisoformat(t['end_date']) -
+                               date.fromisoformat(t['start_date'])).days
+                        cand = cand - timedelta(days=dur)
+                    else:
+                        continue
+                elif p['type'] == 'SF' and pred.get('start_date'):
+                    pred_start = date.fromisoformat(pred['start_date'])
+                    cand = pred_start + timedelta(days=lag)
+                    if t.get('start_date') and t.get('end_date'):
+                        dur = (date.fromisoformat(t['end_date']) -
+                               date.fromisoformat(t['start_date'])).days
+                        cand = cand - timedelta(days=dur)
+                    else:
+                        continue
+                else:
+                    continue
+            except (ValueError, TypeError):
+                continue
+
+            cand_str = cand.isoformat()
+            if earliest is None or cand_str > earliest:
+                earliest = cand_str
+
+        if earliest and t.get('start_date') and earliest > t['start_date']:
+            try:
+                old_start = date.fromisoformat(t['start_date'])
+                old_end   = date.fromisoformat(t['end_date']) if t.get('end_date') else old_start
+                dur = (old_end - old_start).days
+                new_start = date.fromisoformat(earliest)
+                new_end   = new_start + timedelta(days=dur)
+                t['start_date'] = new_start.isoformat()
+                t['end_date']   = new_end.isoformat()
+                changed[tid] = {'start_date': t['start_date'], 'end_date': t['end_date']}
+            except (ValueError, TypeError):
+                pass
+
+        for s in succ_map.get(tid, []):
+            if s['tid'] not in visited:
+                queue.append(s['tid'])
+
+    # Persist all moved tasks
+    for tid, dates in changed.items():
+        db.execute(
+            "UPDATE tasks SET start_date=?, end_date=? WHERE id=?",
+            (dates['start_date'], dates['end_date'], tid)
+        )
+    if changed:
+        db.commit()
+
+    return [{'id': tid, **dates} for tid, dates in changed.items()]
+
+
 @app.route('/api/tasks/<int:tid>', methods=['PUT'])
 def update_task(tid):
     data = request.get_json() or {}
@@ -154,8 +315,18 @@ def update_task(tid):
         db.execute(f"UPDATE tasks SET {set_clause} WHERE id=?", values)
         db.commit()
 
+    # After saving, propagate schedule forward if dates or deps changed
+    schedule_fields = {'start_date', 'end_date', 'depends_on', 'duration'}
+    propagated = []
+    if schedule_fields & set(updates.keys()):
+        propagated = _propagate_schedule(db, tid)
+
     row = db.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()
-    return jsonify(dict(row))
+    resp = dict(row)
+    if propagated:
+        resp['_propagated'] = propagated   # frontend uses this to update state.tasks
+    return jsonify(resp)
+
 
 
 @app.route('/api/tasks/<int:tid>', methods=['DELETE'])
