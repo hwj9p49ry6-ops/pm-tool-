@@ -606,7 +606,6 @@
     <button class="btn btn-ghost" onclick="document.getElementById('import-baltra-input').click()" title="Import schedule JSON">📥 Import</button>
     <button class="btn btn-ghost" onclick="exportProject()" title="Export current project as JSON">📤 Export</button>
   </div>
-  <button class="btn btn-ghost week-mode-toggle" id="week-mode-btn" onclick="toggleWeekMode()" title="Switch between business days (5d/w) and calendar days (7d/w)">📅 5d/w</button>
   <button class="btn btn-primary" onclick="openNewProjectModal()">+ New Project</button>
 </div>
 
@@ -748,21 +747,8 @@ const api = {
 // ═══════════════════════════════════════════════════════════
 const DAY_MS = 86400000;
 function dateToStr(d) { return d.toISOString().slice(0,10); }
-// Duration display helpers (storage = days, display = weeks)
-// daysPerWeek: 5 = business days, 7 = calendar days (persisted in localStorage)
-let daysPerWeek = parseInt(localStorage.getItem('daysPerWeek') || '7');
-function toggleWeekMode() {
-  daysPerWeek = daysPerWeek === 7 ? 5 : 7;
-  localStorage.setItem('daysPerWeek', daysPerWeek);
-  const btn = document.getElementById('week-mode-btn');
-  if (btn) btn.textContent = `📅 ${daysPerWeek}d/w`;
-  // Re-render current view so duration columns update
-  if (state.activeProjectId) renderTasks();
-}
-function _initWeekModeBtn() {
-  const btn = document.getElementById('week-mode-btn');
-  if (btn) btn.textContent = `📅 ${daysPerWeek}d/w`;
-}
+// Duration display helpers (storage = days, display = weeks, 5 business days = 1w)
+const daysPerWeek = 5;
 function daysToWeeks(days) {
   if (days == null || days === '' || days < 0) return '';
   if (days === 0) return '0';
@@ -1019,7 +1005,6 @@ function taskAboveInDisplay(tid) {
 }
 // ═══════════════════════════════════════════════════════════
 async function init() {
-  _initWeekModeBtn();
   await maybeCheckAuth();
   state.projects = await api.get('/api/projects');
   renderSidebar();
