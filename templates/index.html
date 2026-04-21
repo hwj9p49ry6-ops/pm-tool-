@@ -751,10 +751,8 @@ function dateToStr(d) { return d.toISOString().slice(0,10); }
 function daysToWeeks(days) {
   if (days == null || days === '' || days < 0) return '';
   if (days === 0) return '0';
-  const w = days / 7;
-  // Round to nearest 0.5; minimum 0.5 for any non-zero duration
-  const rounded = Math.max(0.5, Math.round(w * 2) / 2);
-  return (rounded % 1 === 0) ? String(rounded) : String(rounded);
+  const rounded = Math.round((days / 7) * 2) / 2;
+  return String(rounded);
 }
 function weeksToDays(weeks) {
   const n = parseFloat(weeks);
