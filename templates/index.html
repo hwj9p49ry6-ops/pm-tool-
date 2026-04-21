@@ -52,6 +52,10 @@
   .btn-primary:hover { background: #3a7bd5; box-shadow: 0 2px 6px rgba(74,144,226,.45); }
   .btn-ghost { background: transparent; color: var(--text-light); border: 1px solid var(--border); }
   .btn-ghost:hover { background: var(--row-hover); }
+  .btn-group { display: inline-flex; }
+  .btn-group .btn { border-radius: 0; border-right-width: 0; }
+  .btn-group .btn:first-child { border-radius: 8px 0 0 8px; }
+  .btn-group .btn:last-child  { border-radius: 0 8px 8px 0; border-right-width: 1px; }
 
   /* ── Layout ── */
   #layout { display: flex; flex: 1; overflow: hidden; }
@@ -598,7 +602,10 @@
   <input type="file" id="excel-upload-input" accept=".xlsx" style="display:none" onchange="uploadExcel(this)">
   <input type="file" id="csv-upload-input" accept=".csv" style="display:none" onchange="uploadCSV(this)">
   <input type="file" id="import-baltra-input" accept=".json" style="display:none" onchange="importBaltraFromFile(this)">
-  <button class="btn btn-ghost" onclick="document.getElementById('import-baltra-input').click()" title="Import ADM schedule JSON to create a Baltra_auto project">📥 Import Schedule</button>
+  <div class="btn-group">
+    <button class="btn btn-ghost" onclick="document.getElementById('import-baltra-input').click()" title="Import schedule JSON">📥 Import</button>
+    <button class="btn btn-ghost" onclick="exportProject()" title="Export current project as JSON">📤 Export</button>
+  </div>
   <button class="btn btn-primary" onclick="openNewProjectModal()">+ New Project</button>
 </div>
 
@@ -626,7 +633,6 @@
         <button class="tab" id="tab-ai-chat" onclick="openAIChat()" title="AI project assistant">🤖 Assistant</button>
         <button class="tab" id="tab-snapshots" onclick="switchView('snapshots')" title="Save and restore database snapshots">💾 Snapshots</button>
         <button class="tab" onclick="openShareModal()" title="Share this project" style="margin-left:auto;">👥 Share</button>
-        <button class="tab" onclick="exportProject()" title="Export project as JSON">📤 Export</button>
       </div>
     </div>
     <div id="view-area">
