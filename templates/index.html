@@ -2057,13 +2057,13 @@ async function importBaltraFromFile(input) {
 
 // Export current project as a JSON file
 async function exportProject() {
-  if (!state.currentProject) { showToast('✗ No project selected'); return; }
+  if (!state.activeProjectId) { showToast('✗ No project selected'); return; }
   try {
-    const data = await api.get(`/api/projects/${state.currentProject}/export`);
+    const data = await api.get(`/api/projects/${state.activeProjectId}/export`);
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
-    const proj = state.projects.find(p => p.id === state.currentProject);
+    const proj = state.projects.find(p => p.id === state.activeProjectId);
     const name = (proj ? proj.name : 'project').replace(/[^a-z0-9_-]/gi, '_').toLowerCase();
     a.href = url;
     a.download = `${name}_${new Date().toISOString().slice(0,10)}.json`;
