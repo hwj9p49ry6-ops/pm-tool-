@@ -1,0 +1,900 @@
+{
+  "data": [
+    {
+      "id": 0,
+      "cat": "func",
+      "name": "TIE Pre-work: Baseline RaveELining",
+      "notes": "TIE Ach 1–3",
+      "deps": [],
+      "teams": [
+        {
+          "t": "TIE",
+          "dur": "3w",
+          "s": "4/20/26",
+          "e": "5/8/26",
+          "hc": "",
+          "note": "TIE 1.0: Boot daemons, CBCurl LLM"
+        },
+        {
+          "t": "TIE",
+          "dur": "1.5w",
+          "s": "5/11/26",
+          "e": "5/20/26",
+          "hc": "",
+          "note": "TIE 2.0: TGTool via RGA"
+        },
+        {
+          "t": "TIE",
+          "dur": "2.5w",
+          "s": "5/20/26",
+          "e": "6/5/26",
+          "hc": "",
+          "note": "TIE 3.0: ATP presubmission"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "cat": "func",
+      "name": "Offline toolchain for model conversion & deployment in build",
+      "deps": [],
+      "depsOut": [
+        2
+      ],
+      "teams": [
+        {
+          "t": "SIML LITE",
+          "dur": "1w",
+          "s": "4/6/26",
+          "e": "4/10/26",
+          "hc": "",
+          "note": "Model Source conversion pipeclean",
+          "subtasks": [
+            {
+              "n": "Pipeclean 6M V5 Dense model",
+              "s": "4/6/26",
+              "e": "4/8/26"
+            },
+            {
+              "n": "Beagle orchestration script",
+              "s": "4/8/26",
+              "e": "4/10/26"
+            }
+          ]
+        },
+        {
+          "t": "MetalLM Sharding",
+          "dur": "2w",
+          "s": "3/24/26",
+          "e": "4/7/26",
+          "hc": "",
+          "note": "Export APIs + Sharding compiler",
+          "subtasks": [
+            {
+              "n": "Export APIs into Beagle framework",
+              "s": "3/24/26",
+              "e": "3/31/26"
+            },
+            {
+              "n": "Sharding compiler MPS+SiLC",
+              "s": "3/31/26",
+              "e": "4/7/26"
+            }
+          ]
+        },
+        {
+          "t": "ANEC Compiler",
+          "dur": "5w",
+          "s": "4/6/26",
+          "e": "5/15/26",
+          "hc": "",
+          "note": "Compiler: ANEC in build (version check) · Design of split code & weights",
+          "subtasks": [
+            {
+              "n": "ANEC in build (version check)",
+              "s": "4/6/26",
+              "e": "4/20/26"
+            },
+            {
+              "n": "Design of split code & weights",
+              "s": "4/20/26",
+              "e": "5/15/26"
+            }
+          ]
+        },
+        {
+          "t": "Polymer Runtime",
+          "dur": "3w",
+          "s": "4/27/26",
+          "e": "5/15/26",
+          "hc": "",
+          "note": "Runtime: Build system integration · Validate ANEC runtime linkage"
+        },
+        {
+          "t": "Integration",
+          "dur": "2w",
+          "s": "5/15/26",
+          "e": "5/29/26",
+          "hc": "",
+          "note": "2w integration period"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "cat": "func",
+      "name": "Support 1K T2I V11.3 3B single ANE w/ time distillation",
+      "notes": "2 HC · Dep on SIML LITE",
+      "deps": [
+        1
+      ],
+      "depsOut": [
+        3,
+        5
+      ],
+      "teams": [
+        {
+          "t": "SIML LITE",
+          "dur": "2w",
+          "s": "3/23/26",
+          "e": "4/6/26",
+          "hc": "",
+          "note": "V11.3 DiT to Beagle format",
+          "subtasks": [
+            {
+              "n": "Eliminate unsupported dtypes (f32,i64)",
+              "s": "3/23/26",
+              "e": "3/28/26"
+            },
+            {
+              "n": "Eliminate unsupported shapes (6d)",
+              "s": "3/28/26",
+              "e": "4/1/26"
+            },
+            {
+              "n": "New ops in Sharding+ANEC",
+              "s": "4/1/26",
+              "e": "4/6/26"
+            }
+          ]
+        },
+        {
+          "t": "MetalLM Sharding",
+          "dur": "4w",
+          "s": "3/24/26",
+          "e": "4/14/26",
+          "hc": "",
+          "note": "DiT sharding support"
+        },
+        {
+          "t": "ANEC Compiler",
+          "dur": "5w",
+          "s": "4/20/26",
+          "e": "5/29/26",
+          "hc": "",
+          "note": "Compiler: ADM vanilla, non-sharded, no isolation, int32 support, macho w/ callgraph (zin)"
+        },
+        {
+          "t": "Polymer Runtime",
+          "dur": "5w",
+          "s": "5/4/26",
+          "e": "6/8/26",
+          "hc": "",
+          "note": "Runtime: Design + Service loop implementation w/ parameterized number of iterations",
+          "subtasks": [
+            {
+              "n": "Backend into Sharding compiler",
+              "s": "5/4/26",
+              "e": "5/11/26"
+            },
+            {
+              "n": "Load models via Polymer APIs",
+              "s": "5/11/26",
+              "e": "5/22/26"
+            },
+            {
+              "n": "Run DiT loop on Baltra and rest on host",
+              "s": "5/22/26",
+              "e": "6/8/26"
+            }
+          ]
+        },
+        {
+          "t": "MetalLM Runtime",
+          "dur": "6w",
+          "s": "4/3/26",
+          "e": "5/15/26",
+          "hc": "2",
+          "note": "Metal stack + task graph · First Taskgraph adoption on Baltra · Start before Polymer ready (J236 eng transition)",
+          "subtasks": [
+            {
+              "n": "Metal stack bringup on Rave",
+              "s": "4/3/26",
+              "e": "4/10/26"
+            },
+            {
+              "n": "Sharding compiler integration",
+              "s": "4/10/26",
+              "e": "4/17/26"
+            },
+            {
+              "n": "Polymer integration",
+              "s": "4/17/26",
+              "e": "4/24/26"
+            },
+            {
+              "n": "Full T2I task graph w/ DiT on Baltra",
+              "s": "4/24/26",
+              "e": "5/1/26"
+            },
+            {
+              "n": "Host-side work + Taskgraph adoption",
+              "s": "5/1/26",
+              "e": "5/15/26"
+            }
+          ]
+        },
+        {
+          "t": "TIE",
+          "dur": "2w",
+          "s": "6/8/26",
+          "e": "6/24/26",
+          "hc": "",
+          "note": "TIE 4.0+5.0",
+          "subtasks": [
+            {
+              "n": "Validate VGSE/TIE/MetalLM task graph",
+              "s": "6/8/26",
+              "e": "6/15/26"
+            },
+            {
+              "n": "CBCurl T2I + VGTool E2E demo",
+              "s": "6/15/26",
+              "e": "6/24/26"
+            }
+          ]
+        },
+        {
+          "t": "Integration",
+          "dur": "2w",
+          "s": "6/24/26",
+          "e": "7/8/26",
+          "hc": "",
+          "note": "2w integration period"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "cat": "func",
+      "name": "Support 1K res T2I V11.3 3B distributed w/ time distillation",
+      "notes": "2 HC · Dep on RDMA",
+      "deps": [
+        2
+      ],
+      "depsOut": [
+        4
+      ],
+      "teams": [
+        {
+          "t": "SIML LITE",
+          "dur": "2.5w",
+          "s": "4/6/26",
+          "e": "4/22/26",
+          "hc": "",
+          "note": "Sharding spec + YAML annotations",
+          "subtasks": [
+            {
+              "n": "Sharding spec: data parallel + weight shard",
+              "s": "4/6/26",
+              "e": "4/13/26"
+            },
+            {
+              "n": "YAML distribution annotations",
+              "s": "4/13/26",
+              "e": "4/18/26"
+            },
+            {
+              "n": "Chunking strategy (inner vs outer)",
+              "s": "4/18/26",
+              "e": "4/22/26"
+            }
+          ]
+        },
+        {
+          "t": "MetalLM Sharding",
+          "dur": "4w",
+          "s": "3/31/26",
+          "e": "4/10/26",
+          "hc": "",
+          "note": "Sharding propagation for new ops"
+        },
+        {
+          "t": "ANEC Compiler",
+          "dur": "2w",
+          "s": "5/4/26",
+          "e": "5/15/26",
+          "hc": "",
+          "note": "Compiler: Sharding support"
+        },
+        {
+          "t": "Polymer Runtime",
+          "dur": "3w",
+          "s": "5/7/26",
+          "e": "5/29/26",
+          "hc": "",
+          "note": "Runtime: Design multi-chip pipelining"
+        },
+        {
+          "t": "MetalLM Runtime",
+          "dur": "5w",
+          "s": "5/1/26",
+          "e": "6/1/26",
+          "hc": "",
+          "note": "Distributed model loading + Metal Collective",
+          "subtasks": [
+            {
+              "n": "Sharded model loading validation",
+              "s": "5/1/26",
+              "e": "5/5/26"
+            },
+            {
+              "n": "DistVAE + Text encoder on Host",
+              "s": "5/5/26",
+              "e": "5/12/26"
+            },
+            {
+              "n": "Polymer pipeline API adoption",
+              "s": "5/12/26",
+              "e": "5/19/26"
+            },
+            {
+              "n": "Metal Collective Library (RDMA backend)",
+              "s": "5/19/26",
+              "e": "5/26/26"
+            },
+            {
+              "n": "Broadcast + gather primitives",
+              "s": "5/26/26",
+              "e": "6/1/26"
+            }
+          ]
+        },
+        {
+          "t": "TIE",
+          "dur": "3w",
+          "s": "6/17/26",
+          "e": "7/7/26",
+          "hc": "",
+          "note": "TIE 6.0: Leader-follower · Start 1w earlier per Kulin alignment",
+          "subtasks": [
+            {
+              "n": "Leader-follower control plane",
+              "s": "6/17/26",
+              "e": "6/24/26"
+            },
+            {
+              "n": "CBCurl 1K distributed validation",
+              "s": "6/24/26",
+              "e": "7/1/26"
+            },
+            {
+              "n": "VGTool E2E (no pipelining)",
+              "s": "7/1/26",
+              "e": "7/7/26"
+            }
+          ]
+        },
+        {
+          "t": "Integration",
+          "dur": "2w",
+          "s": "7/7/26",
+          "e": "7/21/26",
+          "hc": "",
+          "note": "1w asset prep overlap + 2w full-stack integration · QA: Ashitosh team"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "cat": "func",
+      "name": "Support up to 4K res T2I V11.3 3B distributed w/ TD",
+      "notes": "TBD — Polymer vs Zin",
+      "deps": [
+        3
+      ],
+      "teams": [
+        {
+          "t": "SIML LITE",
+          "dur": "3w",
+          "s": "4/22/26",
+          "e": "5/13/26",
+          "hc": "",
+          "note": "Custom op + flash attn kernel",
+          "subtasks": [
+            {
+              "n": "Custom op in Model source",
+              "s": "4/22/26",
+              "e": "4/29/26"
+            },
+            {
+              "n": "YAML annotations for custom func",
+              "s": "4/29/26",
+              "e": "5/4/26"
+            },
+            {
+              "n": "Flash attention kernel integration",
+              "s": "5/4/26",
+              "e": "5/13/26"
+            }
+          ]
+        },
+        {
+          "t": "MetalLM Sharding",
+          "dur": "1w",
+          "s": "4/13/26",
+          "e": "4/17/26",
+          "hc": "",
+          "note": "Custom kernel support in compiler"
+        },
+        {
+          "t": "ANEC Compiler",
+          "dur": "18w",
+          "s": "4/13/26",
+          "e": "8/21/26",
+          "hc": "",
+          "note": "Flash attn · 1 model per resolution · Stitching w/ Polymer · Isolation",
+          "subtasks": [
+            {
+              "n": "ADM Vanilla (8w)",
+              "s": "4/13/26",
+              "e": "6/8/26"
+            },
+            {
+              "n": "Rasterization Library (6w)",
+              "s": "4/13/26",
+              "e": "5/25/26"
+            },
+            {
+              "n": "Isolation w/ Vanilla ADM (6w)",
+              "s": "5/11/26",
+              "e": "6/22/26"
+            },
+            {
+              "n": "Intra-Sharding (8w)",
+              "s": "5/11/26",
+              "e": "7/6/26"
+            },
+            {
+              "n": "Callgraph for ADM vanilla (6w)",
+              "s": "5/18/26",
+              "e": "6/29/26"
+            },
+            {
+              "n": "Insert w/ sharding (6w)",
+              "s": "5/25/26",
+              "e": "7/6/26"
+            },
+            {
+              "n": "PPT infra (6w)",
+              "s": "6/22/26",
+              "e": "8/3/26"
+            },
+            {
+              "n": "Inter-Shard (3w)",
+              "s": "7/6/26",
+              "e": "7/27/26"
+            },
+            {
+              "n": "Callgraph + sharding (3w)",
+              "s": "7/6/26",
+              "e": "7/27/26"
+            },
+            {
+              "n": "Iso+shard integration (2w)",
+              "s": "7/27/26",
+              "e": "8/10/26"
+            },
+            {
+              "n": "Insert w/ sharding+iso (3w)",
+              "s": "8/3/26",
+              "e": "8/21/26"
+            }
+          ]
+        },
+        {
+          "t": "Polymer Runtime",
+          "dur": "11w",
+          "s": "6/8/26",
+          "e": "8/28/26",
+          "hc": "",
+          "note": "Flash attn integration · User isolation removed (pipelining deferred)",
+          "subtasks": [
+            {
+              "n": "Integrate ADM Vanilla (1w)",
+              "s": "6/8/26",
+              "e": "6/15/26"
+            },
+            {
+              "n": "Integrate Isolation w/ Vanilla (1w)",
+              "s": "6/22/26",
+              "e": "6/29/26"
+            },
+            {
+              "n": "Integrate Callgraph ADM vanilla (1w)",
+              "s": "6/29/26",
+              "e": "7/6/26"
+            },
+            {
+              "n": "Integrate Intra-Sharding (2w)",
+              "s": "7/6/26",
+              "e": "7/20/26"
+            },
+            {
+              "n": "Integrate Insert w/ sharding (1w)",
+              "s": "7/6/26",
+              "e": "7/13/26"
+            },
+            {
+              "n": "Integrate Callgraph+sharding+iso (1w)",
+              "s": "7/27/26",
+              "e": "8/3/26"
+            },
+            {
+              "n": "Integrate Iso+shard (1w)",
+              "s": "8/10/26",
+              "e": "8/17/26"
+            },
+            {
+              "n": "Integrate PPT infra (2w)",
+              "s": "8/3/26",
+              "e": "8/17/26"
+            },
+            {
+              "n": "Integrate Insert w/ sharding+iso (1w)",
+              "s": "8/21/26",
+              "e": "8/28/26"
+            }
+          ]
+        },
+        {
+          "t": "Integration",
+          "dur": "1w",
+          "s": "7/6/26",
+          "e": "7/13/26",
+          "hc": "",
+          "note": "Checkpoint 1"
+        },
+        {
+          "t": "Integration",
+          "dur": "1w",
+          "s": "8/3/26",
+          "e": "8/10/26",
+          "hc": "",
+          "note": "Checkpoint 2"
+        },
+        {
+          "t": "Integration",
+          "dur": "1w",
+          "s": "8/28/26",
+          "e": "9/4/26",
+          "hc": "",
+          "note": "Checkpoint 3: Final E2E (~1w past 9/1 target — accepted per Michael)"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "cat": "func",
+      "name": "Support T2I V11.x 8B distributed w/ TD and LoRA",
+      "deps": [
+        2,
+        4
+      ],
+      "depsOut": [
+        6
+      ],
+      "teams": [
+        {
+          "t": "SIML LITE",
+          "dur": "1w",
+          "s": "5/13/26",
+          "e": "5/22/26",
+          "hc": "",
+          "note": "8B model pipeclean"
+        },
+        {
+          "t": "MetalLM Sharding",
+          "dur": "2w",
+          "s": "4/6/26",
+          "e": "4/17/26",
+          "hc": "",
+          "note": "Adapter coalescing during export"
+        },
+        {
+          "t": "ANEC Compiler",
+          "dur": "10w",
+          "s": "5/15/26",
+          "e": "7/27/26",
+          "hc": "",
+          "note": "Parallelized schedule (Aakash) · MARCO to runtime by mid-June",
+          "subtasks": [
+            {
+              "n": "Parameterized weights",
+              "s": "5/15/26",
+              "e": "6/26/26"
+            },
+            {
+              "n": "Split code and weight",
+              "s": "6/1/26",
+              "e": "7/27/26"
+            }
+          ]
+        },
+        {
+          "t": "Polymer Runtime",
+          "dur": "4w",
+          "s": "6/1/26",
+          "e": "6/26/26",
+          "hc": "",
+          "note": "New model load-time APIs for joint adapter",
+          "subtasks": [
+            {
+              "n": "API for fused-adapter weight select",
+              "s": "6/1/26",
+              "e": "6/8/26"
+            },
+            {
+              "n": "Fuse adapters at load time",
+              "s": "6/8/26",
+              "e": "6/17/26"
+            },
+            {
+              "n": "Warmup support for adapter loading",
+              "s": "6/17/26",
+              "e": "6/26/26"
+            }
+          ]
+        },
+        {
+          "t": "MetalLM Runtime",
+          "dur": "3w",
+          "s": "6/15/26",
+          "e": "7/6/26",
+          "hc": "",
+          "note": "Runtime work starting mid-June after MARCO delivery · Risk: Amit on vacation 3w"
+        },
+        {
+          "t": "TIE",
+          "dur": "2w",
+          "s": "7/6/26",
+          "e": "7/20/26",
+          "hc": "",
+          "note": "TIE: Multi-adapter E2E + split code/weight support · Start after July 4 (Rizwana/Ethan)"
+        },
+        {
+          "t": "Integration",
+          "dur": "2w",
+          "s": "7/20/26",
+          "e": "8/3/26",
+          "hc": "",
+          "note": "2w integration period"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "cat": "func",
+      "name": "Support Visual gen creation workflows",
+      "notes": "Safety features · VAE encode/decode",
+      "deps": [
+        5
+      ],
+      "depsOut": [
+        7
+      ],
+      "teams": [
+        {
+          "t": "SIML LITE",
+          "dur": "1.5w",
+          "s": "5/25/26",
+          "e": "6/4/26",
+          "hc": "",
+          "note": "Multiple context lengths"
+        },
+        {
+          "t": "MetalLM Sharding",
+          "dur": "2w",
+          "s": "4/17/26",
+          "e": "4/28/26",
+          "hc": "",
+          "note": "Cross-adapter support"
+        },
+        {
+          "t": "ANEC Compiler",
+          "dur": "6w",
+          "s": "6/1/26",
+          "e": "7/13/26",
+          "hc": "",
+          "note": "Unified model for all resolutions · Specialization"
+        },
+        {
+          "t": "Polymer Runtime",
+          "dur": "3w",
+          "s": "5/25/26",
+          "e": "6/15/26",
+          "hc": "",
+          "note": "Handle different context lengths · NEW: multi-entry point APIs needed",
+          "subtasks": [
+            {
+              "n": "Taskgraphs for creation workflows",
+              "s": "5/25/26",
+              "e": "6/4/26"
+            },
+            {
+              "n": "Omini mask validation on J246B",
+              "s": "6/4/26",
+              "e": "6/15/26"
+            }
+          ]
+        },
+        {
+          "t": "MetalLM Runtime",
+          "dur": "1w",
+          "s": "6/14/26",
+          "e": "6/21/26",
+          "hc": "",
+          "note": ""
+        },
+        {
+          "t": "TIE",
+          "dur": "2w",
+          "s": "6/15/26",
+          "e": "6/29/26",
+          "hc": "",
+          "note": "TIE 7.0: Creation taskgraphs",
+          "subtasks": [
+            {
+              "n": "Validate creation taskgraphs + omini",
+              "s": "6/15/26",
+              "e": "6/22/26"
+            },
+            {
+              "n": "E2E Visual Gen + Photo Edit demo",
+              "s": "6/22/26",
+              "e": "6/29/26"
+            }
+          ]
+        },
+        {
+          "t": "Integration",
+          "dur": "2w",
+          "s": "6/29/26",
+          "e": "7/13/26",
+          "hc": "",
+          "note": "2w integration period"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "cat": "func",
+      "name": "Support for Text-Guided Edit (LLM+Diffusion)",
+      "deps": [
+        6
+      ],
+      "teams": [
+        {
+          "t": "MetalLM Runtime",
+          "dur": "1w",
+          "s": "6/22/26",
+          "e": "6/29/26",
+          "hc": "",
+          "note": "Runtime: No new work"
+        },
+        {
+          "t": "TIE",
+          "dur": "2w",
+          "s": "7/13/26",
+          "e": "7/27/26",
+          "hc": "",
+          "note": "TIE 8.0: Edit taskgraphs",
+          "subtasks": [
+            {
+              "n": "Validate edit taskgraphs on J246B",
+              "s": "7/13/26",
+              "e": "7/20/26"
+            },
+            {
+              "n": "E2E Text-Guided Edit demo",
+              "s": "7/20/26",
+              "e": "7/27/26"
+            }
+          ]
+        },
+        {
+          "t": "Integration",
+          "dur": "2w",
+          "s": "7/27/26",
+          "e": "8/10/26",
+          "hc": "",
+          "note": "2w integration period"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "cat": "perf",
+      "name": "All ADM perf optimizations (SWIN attention)",
+      "notes": "Incl. deferred pipelining from Ach 4",
+      "deps": [],
+      "teams": [
+        {
+          "t": "SIML LITE",
+          "dur": "2w",
+          "s": "6/4/26",
+          "e": "6/19/26",
+          "hc": "",
+          "note": "Windowed + masked attention"
+        },
+        {
+          "t": "Polymer Runtime",
+          "dur": "3w",
+          "s": "8/31/26",
+          "e": "9/18/26",
+          "hc": "",
+          "note": ""
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "cat": "perf",
+      "name": "Meet perf targets for T2I (Baltra only)",
+      "notes": "Scope and timeline TBD — placeholder",
+      "deps": [
+        8
+      ],
+      "depsOut": [
+        10
+      ],
+      "teams": []
+    },
+    {
+      "id": 10,
+      "cat": "perf",
+      "name": "Meet perf targets all ADM workflows (Host GPU)",
+      "notes": "Scope and timeline TBD — extending into mid-November per team assessment",
+      "deps": [
+        9
+      ],
+      "teams": []
+    }
+  ],
+  "ms": [
+    {
+      "l": "ADM Functional",
+      "d": "9/1/26",
+      "c": "var(--cat-func)"
+    },
+    {
+      "l": "ADM Performant",
+      "d": "10/1/26",
+      "c": "var(--cat-perf)"
+    }
+  ],
+  "modelDrops": [
+    {
+      "l": "ADM+FlashAttn (no shard)",
+      "d": "7/3/26",
+      "c": "var(--siml)",
+      "team": "SIML LITE"
+    },
+    {
+      "l": "ADM+FlashAttn (w/ shard)",
+      "d": "8/21/26",
+      "c": "var(--siml)",
+      "team": "SIML LITE"
+    }
+  ]
+}
