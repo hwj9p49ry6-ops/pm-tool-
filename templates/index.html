@@ -597,6 +597,8 @@
   <input type="file" id="import-project-input" accept=".xlsx,.csv" style="display:none" onchange="importProjectFromFile(this)">
   <input type="file" id="excel-upload-input" accept=".xlsx" style="display:none" onchange="uploadExcel(this)">
   <input type="file" id="csv-upload-input" accept=".csv" style="display:none" onchange="uploadCSV(this)">
+  <input type="file" id="import-baltra-input" accept=".json" style="display:none" onchange="importBaltraFromFile(this)">
+  <button class="btn btn-ghost" onclick="document.getElementById('import-baltra-input').click()" title="Import ADM schedule JSON to create a Baltra_auto project">📥 Import Schedule</button>
   <button class="btn btn-primary" onclick="openNewProjectModal()">+ New Project</button>
 </div>
 
@@ -1997,6 +1999,35 @@ async function uploadExcel(input) {
     }
   } catch(e) {
     showToast('✗ Upload failed: ' + e.message);
+  }
+}
+
+// Import an ADM schedule JSON (Baltra format) — creates Baltra_auto project
+async function importBaltraFromFile(input) {
+  const file = input.files[0];
+  input.value = '';
+  if (!file) return;
+  let data;
+  try {
+    const text = await file.text();
+    data = JSON.parse(text);
+  } catch(e) {
+    showToast('✗ Invalid JSON file');
+    return;
+  }
+  if (!data.data && !data.ms && !data.modelDrops) {
+    showToast('✗ File does not look like an ADM schedule JSON');
+    return;
+  }
+  showToast('⏳ Importing schedule…');
+  try {
+    const result = await api.post('/api/import-baltra', data);
+    state.projects.push(result.project);
+    renderSidebar();
+    await selectProject(result.project_id);
+    showToast(`✓ Imported ${result.task_count} tasks into Baltra_auto`);
+  } catch(e) {
+    showToast('✗ Import failed: ' + (e.message || 'unknown error'));
   }
 }
 

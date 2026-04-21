@@ -2276,6 +2276,169 @@ def delete_snapshot(filename):
     return jsonify({'ok': True})
 
 
+# ── Import Baltra Schedule ─────────────────────────────────────────────────────
+_BALTRA_TEAM_COLORS = {
+    'SIML LITE':        '#0a84ff',
+    'MetalLM Sharding': '#ff9f0a',
+    'ANEC Compiler':    '#af52de',
+    'Polymer Runtime':  '#34c759',
+    'MetalLM Runtime':  '#00c7be',
+    'TIE':              '#ff375f',
+    'Integration':      '#8e8e93',
+}
+_BALTRA_ACH_COLOR = '#636366'
+
+
+def _baltra_parse_date(ds):
+    """'M/D/YY' → 'YYYY-MM-DD', or '' if blank."""
+    if not ds:
+        return ''
+    p = ds.strip().split('/')
+    if len(p) != 3:
+        return ''
+    try:
+        return f"20{int(p[2]):02d}-{int(p[0]):02d}-{int(p[1]):02d}"
+    except (ValueError, IndexError):
+        return ''
+
+
+def _baltra_status(sd, ed):
+    today = date.today()
+    if not sd or not ed:
+        return 'Not Started'
+    try:
+        s, e = date.fromisoformat(sd), date.fromisoformat(ed)
+        if e < today:  return 'Complete'
+        if s <= today: return 'In Progress'
+    except (ValueError, TypeError):
+        pass
+    return 'Not Started'
+
+
+def _baltra_insert_task(db, pid, name, owner, sd, ed, priority, notes='',
+                         parent_id=None, color=None, is_milestone=False, sort_order=None):
+    """Insert a task for the Baltra import; return new task id."""
+    if sort_order is None:
+        sort_order = db.execute(
+            "SELECT COALESCE(MAX(sort_order),0) FROM tasks WHERE project_id=?", (pid,)
+        ).fetchone()[0] + 10
+    dur = None
+    if sd and ed:
+        try:
+            dur = (date.fromisoformat(ed) - date.fromisoformat(sd)).days + 1
+        except (ValueError, TypeError):
+            pass
+    cur = db.execute(
+        """INSERT INTO tasks
+           (project_id, name, owner, status, priority, start_date, end_date,
+            pct_complete, depends_on, notes, sort_order, parent_id, duration,
+            color, is_milestone)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (pid, name, owner, _baltra_status(sd, ed), priority, sd, ed,
+         0, '', notes, sort_order, parent_id, dur,
+         color, 1 if is_milestone else 0)
+    )
+    db.commit()
+    return cur.lastrowid
+
+
+@app.route('/api/import-baltra', methods=['POST'])
+def import_baltra():
+    payload = request.get_json(force=True, silent=True)
+    if not payload:
+        return jsonify({'error': 'Invalid JSON'}), 400
+
+    achievements = payload.get('data', [])
+    milestones   = payload.get('ms', [])
+    model_drops  = payload.get('modelDrops', [])
+
+    db = _get_db()
+
+    # Create project
+    cur = db.execute("INSERT INTO projects (name) VALUES (?)", ("Baltra_auto",))
+    db.commit()
+    pid = cur.lastrowid
+
+    # Program milestones
+    ms_func = _baltra_insert_task(
+        db, pid, "ADM Functional ◆", "Program",
+        _baltra_parse_date("9/1/26"), _baltra_parse_date("9/1/26"),
+        "Critical",
+        notes="ADM Functional milestone — Device to Server SW ready for carry",
+        color="#ff9f0a", is_milestone=True)
+
+    ms_perf = _baltra_insert_task(
+        db, pid, "ADM Performant ◆", "Program",
+        _baltra_parse_date("10/1/26"), _baltra_parse_date("10/1/26"),
+        "Critical",
+        notes="ADM Performant milestone — Meet performance targets",
+        color="#5856d6", is_milestone=True)
+
+    # Model drops
+    for md in model_drops:
+        dd = _baltra_parse_date(md['d'])
+        team = md.get('team', 'SIML LITE')
+        _baltra_insert_task(
+            db, pid, f"Model Drop: {md['l']}", team,
+            dd, dd, "High",
+            notes=f"Model drop — {md['l']}",
+            color=_BALTRA_TEAM_COLORS.get(team, '#0a84ff'),
+            is_milestone=True)
+
+    # Achievements
+    ach_tid = {}
+    for ach in achievements:
+        all_starts = [t['s'] for t in ach.get('teams', []) if t.get('s')]
+        all_ends   = [t['e'] for t in ach.get('teams', []) if t.get('e')]
+        ps = min(all_starts, key=_baltra_parse_date) if all_starts else ''
+        pe = max(all_ends,   key=_baltra_parse_date) if all_ends   else ''
+
+        priority  = 'Critical' if ach.get('cat') == 'func' else 'High'
+        ach_name  = f"Ach {ach['id']} — {ach['name']}"
+        parent_tid = _baltra_insert_task(
+            db, pid, ach_name, "Multi-team",
+            _baltra_parse_date(ps), _baltra_parse_date(pe),
+            priority, notes=ach.get('notes', ''), color=_BALTRA_ACH_COLOR)
+        ach_tid[ach['id']] = parent_tid
+
+        for team in ach.get('teams', []):
+            team_name  = team['t']
+            team_color = _BALTRA_TEAM_COLORS.get(team_name, '#8e8e93')
+            team_note  = team.get('note', '')
+            if team.get('hc'):
+                team_note += f" | HC: {team['hc']}"
+            label = (f"{team_name} — {team_note[:60]}" if team_note else team_name)
+            team_tid = _baltra_insert_task(
+                db, pid, label, team_name,
+                _baltra_parse_date(team['s']), _baltra_parse_date(team['e']),
+                "Normal", notes=team_note,
+                parent_id=parent_tid, color=team_color)
+
+            for sub in team.get('subtasks', []):
+                _baltra_insert_task(
+                    db, pid, sub['n'], team_name,
+                    _baltra_parse_date(sub['s']), _baltra_parse_date(sub['e']),
+                    "Normal", parent_id=team_tid, color=team_color)
+
+    # Wire dependencies
+    for ach in achievements:
+        deps = ach.get('deps', [])
+        if deps:
+            dep_str = ','.join(
+                f"{ach_tid[dep_id]}FS"
+                for dep_id in deps if dep_id in ach_tid
+            )
+            if dep_str:
+                db.execute("UPDATE tasks SET depends_on=? WHERE id=?",
+                           (dep_str, ach_tid[ach['id']]))
+    db.commit()
+
+    project = dict(db.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone())
+    task_count = db.execute("SELECT COUNT(*) FROM tasks WHERE project_id=?", (pid,)).fetchone()[0]
+    return jsonify({'ok': True, 'project_id': pid, 'name': 'Baltra_auto', 'task_count': task_count, 'project': project}), 201
+    return jsonify({'ok': True})
+
+
 if __name__ == '__main__':
     _init_db()
     print("Project Manager running at http://localhost:5000")
