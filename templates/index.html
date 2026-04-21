@@ -580,6 +580,14 @@
   #gen-radar-log .log-ok  { color:#059669; }
   #gen-radar-log .log-err { color:#ef4444; }
   #gen-radar-log .log-skip{ color:#6b7280; }
+  #view-snapshots { padding: 32px; max-width: 700px; margin: 0 auto; }
+  .snap-header { display: flex; gap: 10px; align-items: center; margin-bottom: 24px; }
+  .snap-name-input { flex: 1; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+  .snap-list { display: flex; flex-direction: column; gap: 8px; }
+  .snap-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--header-bg); border: 1px solid var(--border); border-radius: 10px; }
+  .snap-name { font-weight: 600; font-size: 14px; flex: 1; }
+  .snap-meta { font-size: 12px; color: var(--text-light); white-space: nowrap; }
+  .snap-empty { color: var(--text-light); font-size: 14px; text-align: center; padding: 40px 0; }
 </style>
 </head>
 <body>
@@ -614,6 +622,7 @@
         <button class="tab" id="tab-report" onclick="openReportModal()">📄 Report</button>
         <button class="tab" id="tab-ai" onclick="openAIModal()" title="Build schedule from description">✨ AI Schedule</button>
         <button class="tab" id="tab-ai-chat" onclick="openAIChat()" title="AI project assistant">🤖 Assistant</button>
+        <button class="tab" id="tab-snapshots" onclick="switchView('snapshots')" title="Save and restore database snapshots">💾 Snapshots</button>
         <button class="tab" onclick="openShareModal()" title="Share this project" style="margin-left:auto;">👥 Share</button>
       </div>
     </div>
@@ -621,6 +630,19 @@
       <div id="empty-state">
         <svg width="64" height="64" viewBox="0 0 64 64" fill="none"><rect x="8" y="12" width="48" height="40" rx="4" stroke="#6b7280" stroke-width="2"/><line x1="8" y1="22" x2="56" y2="22" stroke="#6b7280" stroke-width="2"/><line x1="20" y1="12" x2="20" y2="52" stroke="#6b7280" stroke-width="2"/></svg>
         <p>Select or create a project to get started</p>
+      </div>
+    </div>
+    <div id="view-snapshots" style="display:none; overflow:auto; flex:1;">
+      <div id="view-snapshots-inner">
+        <h2 style="margin-bottom:6px;">💾 Snapshots</h2>
+        <p style="color:var(--text-light);margin-bottom:24px;font-size:14px;">
+          Save and restore complete versions of all your project data.
+        </p>
+        <div class="snap-header">
+          <input class="snap-name-input" id="snap-name-input" placeholder="Label (optional)" maxlength="40">
+          <button class="btn btn-primary" onclick="saveSnapshot()">Save Now</button>
+        </div>
+        <div id="snap-list" class="snap-list"></div>
       </div>
     </div>
   </div>
@@ -716,6 +738,17 @@ const api = {
 // ═══════════════════════════════════════════════════════════
 const DAY_MS = 86400000;
 function dateToStr(d) { return d.toISOString().slice(0,10); }
+// Duration display helpers (storage = days, display = weeks)
+function daysToWeeks(days) {
+  if (days == null || days === '' || days < 0) return '';
+  if (days === 0) return '0';
+  const w = days / 7;
+  return (w % 1 === 0) ? String(w) : parseFloat(w.toFixed(1)).toString();
+}
+function weeksToDays(weeks) {
+  const n = parseFloat(weeks);
+  return isNaN(n) ? null : Math.round(n * 7);
+}
 function strToDate(s) {
   if (!s) return null;
   const [y,m,d] = s.split('-').map(Number);
@@ -920,10 +953,18 @@ function computeHierarchy(tasks) {
       const starts = children.map(c => c.start_date).filter(Boolean);
       const ends   = children.map(c => c.end_date).filter(Boolean);
       const pcts   = children.map(c => c.pct_complete || 0);
+      const minStart = starts.length ? starts.reduce((a,b) => a < b ? a : b) : '';
+      const maxEnd   = ends.length   ? ends.reduce((a,b)   => a > b ? a : b) : '';
+      let rollupDur = null;
+      if (minStart && maxEnd) {
+        const s = strToDate(minStart), e = strToDate(maxEnd);
+        if (s && e && e >= s) rollupDur = daysBetween(s, e) + 1;
+      }
       rollup = {
-        start_date:   starts.length ? starts.reduce((a,b) => a < b ? a : b) : '',
-        end_date:     ends.length   ? ends.reduce((a,b)   => a > b ? a : b) : '',
-        pct_complete: pcts.length   ? Math.round(pcts.reduce((a,b)=>a+b,0)/pcts.length) : 0,
+        start_date:   minStart,
+        end_date:     maxEnd,
+        duration:     rollupDur,
+        pct_complete: pcts.length ? Math.round(pcts.reduce((a,b)=>a+b,0)/pcts.length) : 0,
       };
     }
     displayList.push({ task: t, level, isParent, collapsed, rollup });
@@ -1038,6 +1079,22 @@ async function saveNewProject() {
 // VIEW SWITCHING
 // ═══════════════════════════════════════════════════════════
 function switchView(view) {
+  const snapPanel = document.getElementById('view-snapshots');
+  const viewArea = document.getElementById('view-area');
+  if (view === 'snapshots') {
+    viewArea.style.display = 'none';
+    snapPanel.style.display = 'block';
+    ['grid','gantt','dashboard','calendar','kanban'].forEach(v => {
+      const el = document.getElementById('tab-' + v);
+      if (el) el.classList.remove('active');
+    });
+    document.getElementById('tab-snapshots').classList.add('active');
+    loadSnapshots();
+    return;
+  }
+  snapPanel.style.display = 'none';
+  viewArea.style.display = '';
+  document.getElementById('tab-snapshots').classList.remove('active');
   state.activeView = view;
   ['grid','gantt','dashboard','calendar','kanban'].forEach(v => {
     const el = document.getElementById('tab-' + v);
@@ -1234,7 +1291,13 @@ function getColCell(key, t, entry) {
   const { level, isParent, collapsed, rollup } = entry;
   const pct = t.pct_complete || 0;
   const isMilestone = t.is_milestone == 1 || t.duration == 0;
-  const dur = isMilestone ? '0' : ((t.duration != null && t.duration > 0) ? t.duration : '');
+  // Compute duration from dates as fallback when DB value is null
+  let _dur = t.duration;
+  if ((_dur == null || _dur === '') && t.start_date && t.end_date) {
+    const s = strToDate(t.start_date), e = strToDate(t.end_date);
+    if (s && e && e >= s) _dur = daysBetween(s, e) + 1;
+  }
+  const dur = isMilestone ? '0' : ((_dur != null && _dur > 0) ? _dur : '');
   switch (key) {
     case 'name': {
       const toggleSpan = isParent
@@ -1266,8 +1329,13 @@ function getColCell(key, t, entry) {
       return isParent && rollup
         ? `<td class="parent-rollup">${rollup.start_date || '—'}</td>`
         : `<td><input class="cell-edit" data-tid="${t.id}" data-field="start_date" type="date" value="${t.start_date||''}"></td>`;
-    case 'duration':
-      return `<td><div class="dur-wrap"><input class="cell-edit dur-input" data-tid="${t.id}" data-field="duration" type="number" min="0" value="${dur}" placeholder="—" title="${isMilestone ? 'Milestone: duration = 0' : 'Duration in days'}"><span class="dur-unit">${dur !== '' ? 'd' : ''}</span></div></td>`;
+    case 'duration': {
+      const effDur = (isParent && rollup && rollup.duration != null) ? rollup.duration : (_dur != null && _dur >= 0 ? _dur : null);
+      const durW = isMilestone ? '0' : daysToWeeks(effDur);
+      if (isParent && rollup)
+        return `<td class="parent-rollup">${durW !== '' ? durW + 'w' : '—'}</td>`;
+      return `<td><div class="dur-wrap"><input class="cell-edit dur-input" data-tid="${t.id}" data-field="duration" type="number" min="0" step="0.5" value="${durW}" placeholder="—" title="${isMilestone ? 'Milestone: duration = 0' : 'Duration in weeks (e.g. 2 = 2 weeks)'}"><span class="dur-unit">${durW !== '' ? 'w' : ''}</span></div></td>`;
+    }
     case 'end_date':
       return isParent && rollup
         ? `<td class="parent-rollup">${rollup.end_date || '—'}</td>`
@@ -1473,7 +1541,8 @@ async function _doCommit(el) {
     updates.depends_on = stored;
     // Let backend _propagate_schedule compute new dates — it handles start+end+weekends correctly
   } else if (field === 'duration') {
-    const dur = rawVal ? parseInt(rawVal) : null;
+    // Input is in weeks; convert to days for storage
+    const dur = rawVal ? weeksToDays(rawVal) : null;
     if (dur === task.duration) return;
     updates.duration = dur;
     const tempTask = { ...task, duration: dur };
@@ -1518,7 +1587,11 @@ async function patchTask(tid, updates) {
   if (updated._propagated && updated._propagated.length) {
     updated._propagated.forEach(p => {
       const j = state.tasks.findIndex(t => t.id === p.id);
-      if (j >= 0) { state.tasks[j].start_date = p.start_date; state.tasks[j].end_date = p.end_date; }
+      if (j >= 0) {
+        state.tasks[j].start_date = p.start_date;
+        state.tasks[j].end_date   = p.end_date;
+        if (p.duration != null) state.tasks[j].duration = p.duration;
+      }
     });
     showToast(`↳ ${updated._propagated.length} dependent task${updated._propagated.length > 1 ? 's' : ''} rescheduled`);
   }
@@ -1580,10 +1653,10 @@ async function propagateSchedule(rootTid) {
     });
 
     if (earliestStart && earliestStart > t.start_date) {
-      const dur = daysBetween(strToDate(t.start_date), strToDate(t.end_date));
+      const span = daysBetween(strToDate(t.start_date), strToDate(t.end_date));
       t.start_date = earliestStart;
-      t.end_date   = addDays(earliestStart, dur);
-      changed.set(tid, { start_date: t.start_date, end_date: t.end_date });
+      t.end_date   = addDays(earliestStart, span);
+      changed.set(tid, { start_date: t.start_date, end_date: t.end_date, duration: span + 1 });
     }
 
     // Always enqueue successors so they can recheck their own predecessors
@@ -2762,6 +2835,13 @@ function buildGanttEditTable() {
     const predDisplay = dirty['depends_on'] !== undefined
       ? dirty['depends_on']
       : predToDisplay(task.depends_on);
+    const durWVal = dirty['duration'] !== undefined
+      ? dirty['duration']
+      : daysToWeeks(task.duration != null ? task.duration : (() => {
+          if (task.start_date && task.end_date) {
+            const s = strToDate(task.start_date), e = strToDate(task.end_date);
+            return (s && e && e >= s) ? daysBetween(s, e) + 1 : null;
+          } return null; })());
 
     return `<tr>
       <td style="text-align:center;color:var(--text-light);font-size:11px;width:28px;padding:2px 4px;">${i+1}</td>
@@ -2771,6 +2851,7 @@ function buildGanttEditTable() {
       <td style="min-width:80px;"><select class="get-input${dc('priority')}" data-tid="${tid}" data-field="priority" onchange="_getMarkDirty(${tid},'priority',this.value,this)">${priorityOptions}</select></td>
       <td style="min-width:100px;"><input class="get-input${dc('start_date')}" type="date" data-tid="${tid}" data-field="start_date" value="${v('start_date')}" onchange="_getMarkDirty(${tid},'start_date',this.value,this)"></td>
       <td style="min-width:100px;"><input class="get-input${dc('end_date')}" type="date" data-tid="${tid}" data-field="end_date" value="${v('end_date')}" onchange="_getMarkDirty(${tid},'end_date',this.value,this)"></td>
+      <td style="min-width:60px;"><input class="get-input${dc('duration')}" type="number" min="0" step="0.5" data-tid="${tid}" data-field="duration" value="${durWVal}" placeholder="w" title="Weeks" oninput="_getMarkDirty(${tid},'duration',this.value,this)"></td>
       <td style="min-width:60px;"><input class="get-input${dc('pct_complete')}" type="number" min="0" max="100" data-tid="${tid}" data-field="pct_complete" value="${v('pct_complete',0)}" oninput="_getMarkDirty(${tid},'pct_complete',this.value,this)"></td>
       <td style="min-width:90px;"><input class="get-input${dc('depends_on')}" data-tid="${tid}" data-field="depends_on" value="${predDisplay.replace(/"/g,'&quot;')}" oninput="_getMarkDirty(${tid},'depends_on',this.value,this)" placeholder="e.g. 2FS"></td>
       <td style="min-width:140px;"><input class="get-input${dc('notes')}" data-tid="${tid}" data-field="notes" value="${(v('notes')).replace(/"/g,'&quot;')}" oninput="_getMarkDirty(${tid},'notes',this.value,this)"></td>
@@ -2780,7 +2861,7 @@ function buildGanttEditTable() {
   wrap.innerHTML = `<table class="get-table">
     <thead><tr>
       <th>#</th><th>Task Name</th><th>Owner</th><th>Status</th><th>Priority</th>
-      <th>Start</th><th>End</th><th>%</th><th>Predecessor</th><th>Notes</th>
+      <th>Start</th><th>End</th><th>Dur (w)</th><th>%</th><th>Predecessor</th><th>Notes</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -2826,6 +2907,21 @@ async function applyGanttEditTable() {
       payload.depends_on = predFromInput(payload.depends_on, state.tasks);
     if (payload.pct_complete !== undefined)
       payload.pct_complete = Math.min(100, Math.max(0, parseInt(payload.pct_complete) || 0));
+    // Duration column is in weeks — convert to days
+    if (payload.duration !== undefined) {
+      const days = weeksToDays(payload.duration);
+      if (days !== null) payload.duration = days; else delete payload.duration;
+    }
+    // Derive duration from start+end when dates changed (takes priority over explicit duration)
+    if (payload.start_date !== undefined || payload.end_date !== undefined) {
+      const task = state.tasks.find(t => t.id === tid);
+      const sd = payload.start_date !== undefined ? payload.start_date : (task ? task.start_date : '');
+      const ed = payload.end_date   !== undefined ? payload.end_date   : (task ? task.end_date   : '');
+      if (sd && ed) {
+        const s = strToDate(sd), e = strToDate(ed);
+        if (s && e && e >= s) payload.duration = daysBetween(s, e) + 1;
+      }
+    }
     await patchTask(tid, payload);
     saved++;
   }
@@ -2847,6 +2943,8 @@ function resetGanttEditTable() {
     if (!orig) return;
     if (field === 'depends_on') {
       el.value = predToDisplay(orig.depends_on);
+    } else if (field === 'duration') {
+      el.value = daysToWeeks(orig.duration);
     } else {
       el.value = orig[field] ?? '';
     }
@@ -3034,14 +3132,15 @@ function setupGanttDrag(rangeStart, cw) {
       if (dragging.mode === 'move') {
         newStart = addDays(dragging.origStart, deltaDays);
         newEnd   = addDays(dragging.origEnd,   deltaDays);
+        newDur   = dragging.origEndOff - dragging.origStartOff + 1; // duration unchanged on move
       } else {
         const dur = Math.max(1, dragging.origEndOff - dragging.origStartOff + 1 + deltaDays);
         newEnd = addDays(dragging.origStart, dur - 1);
         newDur = dur;
       }
       const t = state.tasks.find(t => t.id === dragging.tid);
-      if (t) { t.start_date = newStart; t.end_date = newEnd; if (newDur) t.duration = newDur; }
-      const dragResult = await api.put(`/api/tasks/${dragging.tid}`, { start_date: newStart, end_date: newEnd, ...(newDur ? {duration: newDur} : {}) });
+      if (t) { t.start_date = newStart; t.end_date = newEnd; t.duration = newDur; }
+      const dragResult = await api.put(`/api/tasks/${dragging.tid}`, { start_date: newStart, end_date: newEnd, duration: newDur });
       if (dragResult._propagated && dragResult._propagated.length) {
         dragResult._propagated.forEach(p => {
           const j = state.tasks.findIndex(t => t.id === p.id);
@@ -4415,16 +4514,24 @@ function closeGanttTaskEdit() {
 
 async function saveGanttTaskEdit() {
   if (!_ganttEditTid) return;
+  const sd = document.getElementById('gantt-edit-start').value;
+  const ed = document.getElementById('gantt-edit-end').value;
+  let duration = null;
+  if (sd && ed) {
+    const s = strToDate(sd), e = strToDate(ed);
+    if (s && e && e >= s) duration = daysBetween(s, e) + 1;
+  }
   const updates = {
     name:         document.getElementById('gantt-edit-name').value.trim(),
-    start_date:   document.getElementById('gantt-edit-start').value,
-    end_date:     document.getElementById('gantt-edit-end').value,
+    start_date:   sd,
+    end_date:     ed,
     status:       document.getElementById('gantt-edit-status').value,
     priority:     document.getElementById('gantt-edit-priority').value,
     owner:        document.getElementById('gantt-edit-owner').value.trim(),
     pct_complete: parseInt(document.getElementById('gantt-edit-pct').value) || 0,
     notes:        document.getElementById('gantt-edit-notes').value.trim(),
   };
+  if (duration !== null) updates.duration = duration;
   closeGanttTaskEdit();
   await patchTask(_ganttEditTid, updates);
 }
@@ -5140,6 +5247,40 @@ async function removeProjectMember(userId) {
 
 async function maybeCheckAuth() {
   // No auth required — open access
+}
+
+// ── Snapshots ──────────────────────────────────────────────
+async function loadSnapshots() {
+  const snaps = await api.get('/api/snapshots');
+  const el = document.getElementById('snap-list');
+  if (!snaps.length) { el.innerHTML = '<p class="snap-empty">No snapshots yet.</p>'; return; }
+  el.innerHTML = snaps.map(s => `
+    <div class="snap-row">
+      <span class="snap-name">${s.name}</span>
+      <span class="snap-meta">${new Date(s.created_at).toLocaleString()} · ${s.size_kb} KB</span>
+      <button class="btn btn-ghost" onclick="restoreSnapshot('${s.filename}')">Restore</button>
+      <button class="btn btn-ghost" style="color:#ff3b30" onclick="deleteSnapshot('${s.filename}')">Delete</button>
+    </div>`).join('');
+}
+
+async function saveSnapshot() {
+  const name = document.getElementById('snap-name-input').value.trim();
+  await api.post('/api/snapshots', { name });
+  document.getElementById('snap-name-input').value = '';
+  showToast('✓ Snapshot saved');
+  loadSnapshots();
+}
+
+async function restoreSnapshot(filename) {
+  if (!confirm('Restore this snapshot? Current data will be replaced.')) return;
+  await api.post(`/api/snapshots/${filename}/restore`, {});
+  location.reload();
+}
+
+async function deleteSnapshot(filename) {
+  if (!confirm('Delete this snapshot?')) return;
+  await api.del(`/api/snapshots/${filename}`);
+  loadSnapshots();
 }
 </script>
 

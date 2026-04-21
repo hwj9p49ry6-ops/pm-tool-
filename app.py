@@ -5,8 +5,9 @@ import sqlite3
 import io
 import hashlib
 import secrets
+import shutil
 import re as _re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from flask import Flask, jsonify, request, render_template, g, send_file
 
@@ -26,6 +27,8 @@ if os.path.exists(_APPLE_CA) and not os.environ.get('REQUESTS_CA_BUNDLE'):
 app = Flask(__name__, template_folder='templates')
 app.config['DATABASE'] = os.path.join(os.path.dirname(__file__), 'pm.db')
 app.secret_key = os.environ.get('PM_SECRET_KEY', 'dev-secret-key-change-in-production')
+
+SNAP_DIR = os.path.join(os.path.dirname(app.config['DATABASE']), 'snapshots')
 
 
 @app.teardown_appcontext
@@ -122,28 +125,44 @@ def create_task(pid):
     max_order = db.execute(
         "SELECT COALESCE(MAX(sort_order),0) FROM tasks WHERE project_id=?", (pid,)
     ).fetchone()[0]
+    sd  = data.get('start_date', '') or ''
+    ed  = data.get('end_date', '')   or ''
+    dur = data.get('duration', None)
+    # Reconcile start/end/duration at creation time
+    try:
+        if sd and ed:
+            dur = (date.fromisoformat(ed) - date.fromisoformat(sd)).days + 1
+        elif sd and dur and int(dur) > 0:
+            ed = (date.fromisoformat(sd) + timedelta(days=int(dur) - 1)).isoformat()
+    except (ValueError, TypeError):
+        pass
     cur = db.execute(
         """INSERT INTO tasks
            (project_id, name, owner, status, priority, start_date, end_date,
-            pct_complete, depends_on, notes, sort_order, parent_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            pct_complete, depends_on, notes, sort_order, parent_id, duration)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             pid,
             data.get('name', 'New Task'),
             data.get('owner', ''),
             data.get('status', 'Not Started'),
             data.get('priority', 'Medium'),
-            data.get('start_date', ''),
-            data.get('end_date', ''),
+            sd,
+            ed,
             data.get('pct_complete', 0),
             data.get('depends_on', ''),
             data.get('notes', ''),
             data.get('sort_order', max_order + 10),
             data.get('parent_id', None),
+            dur,
         )
     )
     db.commit()
-    row = db.execute("SELECT * FROM tasks WHERE id=?", (cur.lastrowid,)).fetchone()
+    new_tid = cur.lastrowid
+    # Roll up to parent if this task has one
+    if data.get('parent_id'):
+        _rollup_parent(db, new_tid)
+    row = db.execute("SELECT * FROM tasks WHERE id=?", (new_tid,)).fetchone()
     return jsonify(dict(row)), 201
 
 
@@ -176,6 +195,48 @@ def _parse_predecessors(depends_on):
             lag_days = sign * (n * 7 if lag_str[-1].lower() == 'w' else n)
         result.append({'task_id': task_id, 'type': dep_type, 'lag': lag_days})
     return result
+
+
+def _rollup_parent(db, task_id):
+    """
+    After a child task's dates change, update the parent's start/end/duration
+    to span all its children. Cascades upward through the ancestor chain.
+    Returns a list of {id, start_date, end_date, duration} for each ancestor updated.
+    """
+    row = db.execute("SELECT parent_id FROM tasks WHERE id=?", (task_id,)).fetchone()
+    if not row or not row['parent_id']:
+        return []
+    parent_id = row['parent_id']
+    children = db.execute(
+        "SELECT start_date, end_date FROM tasks WHERE parent_id=?", (parent_id,)
+    ).fetchall()
+    starts = [c['start_date'] for c in children if c['start_date']]
+    ends   = [c['end_date']   for c in children if c['end_date']]
+    if not starts or not ends:
+        return []
+    min_start = min(starts)
+    max_end   = max(ends)
+    try:
+        new_dur = (date.fromisoformat(max_end) - date.fromisoformat(min_start)).days + 1
+    except ValueError:
+        return []
+    parent_row = db.execute("SELECT * FROM tasks WHERE id=?", (parent_id,)).fetchone()
+    if not parent_row:
+        return []
+    changed = []
+    if (parent_row['start_date'] != min_start or
+            parent_row['end_date'] != max_end or
+            parent_row['duration'] != new_dur):
+        db.execute(
+            "UPDATE tasks SET start_date=?, end_date=?, duration=? WHERE id=?",
+            (min_start, max_end, new_dur, parent_id)
+        )
+        db.commit()
+        changed.append({'id': parent_id, 'start_date': min_start,
+                        'end_date': max_end, 'duration': new_dur})
+    # Cascade upward
+    changed.extend(_rollup_parent(db, parent_id))
+    return changed
 
 
 def _propagate_schedule(db, root_tid):
@@ -268,12 +329,13 @@ def _propagate_schedule(db, root_tid):
             try:
                 old_start = date.fromisoformat(t['start_date'])
                 old_end   = date.fromisoformat(t['end_date']) if t.get('end_date') else old_start
-                dur = (old_end - old_start).days
+                span = (old_end - old_start).days
                 new_start = date.fromisoformat(earliest)
-                new_end   = new_start + timedelta(days=dur)
+                new_end   = new_start + timedelta(days=span)
+                new_dur   = span + 1
                 t['start_date'] = new_start.isoformat()
                 t['end_date']   = new_end.isoformat()
-                changed[tid] = {'start_date': t['start_date'], 'end_date': t['end_date']}
+                changed[tid] = {'start_date': t['start_date'], 'end_date': t['end_date'], 'duration': new_dur}
             except (ValueError, TypeError):
                 pass
 
@@ -284,13 +346,24 @@ def _propagate_schedule(db, root_tid):
     # Persist all moved tasks
     for tid, dates in changed.items():
         db.execute(
-            "UPDATE tasks SET start_date=?, end_date=? WHERE id=?",
-            (dates['start_date'], dates['end_date'], tid)
+            "UPDATE tasks SET start_date=?, end_date=?, duration=? WHERE id=?",
+            (dates['start_date'], dates['end_date'], dates['duration'], tid)
         )
     if changed:
         db.commit()
 
-    return [{'id': tid, **dates} for tid, dates in changed.items()]
+    # Roll up dates/duration to parent tasks for every moved task
+    rolled = []
+    seen_parents = set()
+    for tid in list(changed.keys()):
+        for entry in _rollup_parent(db, tid):
+            if entry['id'] not in seen_parents:
+                rolled.append(entry)
+                seen_parents.add(entry['id'])
+
+    result = [{'id': tid, **dates} for tid, dates in changed.items()]
+    result.extend(rolled)
+    return result
 
 
 @app.route('/api/projects/<int:pid>/recalculate-schedule', methods=['POST'])
@@ -357,18 +430,19 @@ def recalculate_schedule(pid):
             try:
                 old_start = date.fromisoformat(t['start_date'])
                 old_end   = date.fromisoformat(t['end_date']) if t.get('end_date') else old_start
-                dur = (old_end - old_start).days
+                span = (old_end - old_start).days
                 new_start = date.fromisoformat(earliest)
-                new_end   = new_start + timedelta(days=dur)
+                new_end   = new_start + timedelta(days=span)
+                new_dur   = span + 1
                 t['start_date'] = new_start.isoformat()
                 t['end_date']   = new_end.isoformat()
-                changed[tid] = {'start_date': t['start_date'], 'end_date': t['end_date']}
+                changed[tid] = {'start_date': t['start_date'], 'end_date': t['end_date'], 'duration': new_dur}
             except (ValueError, TypeError):
                 pass
 
     for tid, dates in changed.items():
-        db.execute("UPDATE tasks SET start_date=?, end_date=? WHERE id=?",
-                   (dates['start_date'], dates['end_date'], tid))
+        db.execute("UPDATE tasks SET start_date=?, end_date=?, duration=? WHERE id=?",
+                   (dates['start_date'], dates['end_date'], dates['duration'], tid))
     if changed:
         db.commit()
 
@@ -391,6 +465,56 @@ def update_task(tid):
         if f in data:
             updates[f] = data[f]
 
+    # Reconcile start_date / end_date / duration so all three are always consistent.
+    # Priority depends on which fields the caller explicitly provided.
+    has_start = 'start_date' in data
+    has_end   = 'end_date'   in data
+    has_dur   = 'duration'   in data
+    sd     = (updates.get('start_date', row['start_date'])  or '').strip()
+    ed     = (updates.get('end_date',   row['end_date'])    or '').strip()
+    dur    = updates.get('duration', row['duration'])
+    is_mil = int(updates.get('is_milestone', row['is_milestone'] or 0) or 0)
+    extra  = {}
+    try:
+        if has_start and has_end:
+            # User explicitly provided both dates → derive duration from them
+            if sd and ed:
+                s, e = date.fromisoformat(sd), date.fromisoformat(ed)
+                if e >= s:
+                    extra['duration'] = 0 if is_mil else (e - s).days + 1
+        elif has_start and has_dur:
+            # User explicitly provided start + duration → derive end date
+            if sd and dur is not None and int(dur) > 0:
+                s = date.fromisoformat(sd)
+                extra['end_date'] = (s + timedelta(days=int(dur) - 1)).isoformat()
+        elif has_start:
+            # User moved start only → shift end to preserve existing duration
+            existing_dur = row['duration']
+            existing_end = (row['end_date'] or '').strip()
+            if sd and existing_dur and int(existing_dur) > 0:
+                s = date.fromisoformat(sd)
+                extra['end_date'] = (s + timedelta(days=int(existing_dur) - 1)).isoformat()
+            elif sd and existing_end:
+                s, e = date.fromisoformat(sd), date.fromisoformat(existing_end)
+                if e >= s:
+                    extra['duration'] = (e - s).days + 1
+        elif has_end:
+            # User changed end date only → recompute duration using existing start
+            existing_start = (row['start_date'] or '').strip()
+            if ed and existing_start:
+                s, e = date.fromisoformat(existing_start), date.fromisoformat(ed)
+                if e >= s:
+                    extra['duration'] = 0 if is_mil else (e - s).days + 1
+        elif has_dur:
+            # User changed duration only → recompute end using existing start
+            existing_start = (row['start_date'] or '').strip()
+            if existing_start and dur is not None and int(dur) > 0:
+                s = date.fromisoformat(existing_start)
+                extra['end_date'] = (s + timedelta(days=int(dur) - 1)).isoformat()
+    except (ValueError, TypeError):
+        pass
+    updates.update(extra)
+
     if updates:
         set_clause = ', '.join(f"{k}=?" for k in updates)
         values = list(updates.values()) + [tid]
@@ -402,6 +526,14 @@ def update_task(tid):
     propagated = []
     if schedule_fields & set(updates.keys()):
         propagated = _propagate_schedule(db, tid)
+
+    # Roll up dates/duration to parent (and ancestors) after any date/dep change
+    date_fields = {'start_date', 'end_date', 'duration'}
+    if date_fields & set(updates.keys()):
+        rolled = _rollup_parent(db, tid)
+        # Merge into propagated, avoiding duplicates
+        existing_ids = {p['id'] for p in propagated}
+        propagated.extend(e for e in rolled if e['id'] not in existing_ids)
 
     row = db.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()
     resp = dict(row)
@@ -1821,6 +1953,19 @@ def _init_db():
             db.commit()
         except sqlite3.OperationalError:
             pass  # column already exists
+    # Backfill duration for tasks that have start+end but no duration
+    db.execute("""
+        UPDATE tasks
+        SET duration = (
+            julianday(end_date) - julianday(start_date) + 1
+        )
+        WHERE duration IS NULL
+          AND start_date != ''
+          AND end_date   != ''
+          AND start_date IS NOT NULL
+          AND end_date   IS NOT NULL
+    """)
+    db.commit()
     # Users + project_access tables
     db.executescript("""
         CREATE TABLE IF NOT EXISTS users (
@@ -2064,6 +2209,70 @@ def clear_baseline(pid):
     db = _get_db()
     db.execute("UPDATE tasks SET baseline_start='', baseline_end='' WHERE project_id=?", (pid,))
     db.commit()
+    return jsonify({'ok': True})
+
+
+# ── Snapshots ──────────────────────────────────────────────────────────────────
+def _sanitize_snap_name(name):
+    name = name.strip() or 'snapshot'
+    name = _re.sub(r'\s+', '-', name)
+    name = _re.sub(r'[^A-Za-z0-9\-_]', '', name)
+    return name[:40] or 'snapshot'
+
+
+def _snap_obj(filename):
+    path = os.path.join(SNAP_DIR, filename)
+    parts = filename[:-3].split('_', 2)  # YYYYMMDD, HHMMSS, label
+    try:
+        dt = datetime.strptime(parts[0] + '_' + parts[1], '%Y%m%d_%H%M%S')
+        created_at = dt.isoformat()
+    except (IndexError, ValueError):
+        created_at = ''
+    label = parts[2].replace('-', ' ') if len(parts) > 2 else filename
+    size_kb = round(os.stat(path).st_size / 1024, 1)
+    return {'name': label, 'filename': filename, 'created_at': created_at, 'size_kb': size_kb}
+
+
+@app.route('/api/snapshots', methods=['GET'])
+def list_snapshots():
+    os.makedirs(SNAP_DIR, exist_ok=True)
+    files = sorted(
+        [f for f in os.listdir(SNAP_DIR) if f.endswith('.db')],
+        reverse=True
+    )
+    return jsonify([_snap_obj(f) for f in files])
+
+
+@app.route('/api/snapshots', methods=['POST'])
+def create_snapshot():
+    os.makedirs(SNAP_DIR, exist_ok=True)
+    data = request.get_json() or {}
+    label = _sanitize_snap_name(data.get('name', ''))
+    filename = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + label + '.db'
+    snap_path = os.path.join(SNAP_DIR, filename)
+    shutil.copy2(app.config['DATABASE'], snap_path)
+    return jsonify(_snap_obj(filename)), 201
+
+
+@app.route('/api/snapshots/<filename>/restore', methods=['POST'])
+def restore_snapshot(filename):
+    if not filename.endswith('.db') or '/' in filename or '..' in filename:
+        return jsonify({'error': 'Invalid filename'}), 400
+    snap_path = os.path.join(SNAP_DIR, filename)
+    if not os.path.isfile(snap_path):
+        return jsonify({'error': 'Not found'}), 404
+    shutil.copy2(snap_path, app.config['DATABASE'])
+    return jsonify({'ok': True})
+
+
+@app.route('/api/snapshots/<filename>', methods=['DELETE'])
+def delete_snapshot(filename):
+    if not filename.endswith('.db') or '/' in filename or '..' in filename:
+        return jsonify({'error': 'Invalid filename'}), 400
+    snap_path = os.path.join(SNAP_DIR, filename)
+    if not os.path.isfile(snap_path):
+        return jsonify({'error': 'Not found'}), 404
+    os.remove(snap_path)
     return jsonify({'ok': True})
 
 
