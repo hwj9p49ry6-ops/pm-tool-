@@ -752,7 +752,9 @@ function daysToWeeks(days) {
   if (days == null || days === '' || days < 0) return '';
   if (days === 0) return '0';
   const w = days / 7;
-  return (w % 1 === 0) ? String(w) : parseFloat(w.toFixed(1)).toString();
+  // Round to nearest 0.5; minimum 0.5 for any non-zero duration
+  const rounded = Math.max(0.5, Math.round(w * 2) / 2);
+  return (rounded % 1 === 0) ? String(rounded) : String(rounded);
 }
 function weeksToDays(weeks) {
   const n = parseFloat(weeks);
