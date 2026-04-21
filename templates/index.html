@@ -626,6 +626,7 @@
         <button class="tab" id="tab-ai-chat" onclick="openAIChat()" title="AI project assistant">🤖 Assistant</button>
         <button class="tab" id="tab-snapshots" onclick="switchView('snapshots')" title="Save and restore database snapshots">💾 Snapshots</button>
         <button class="tab" onclick="openShareModal()" title="Share this project" style="margin-left:auto;">👥 Share</button>
+        <button class="tab" onclick="exportProject()" title="Export project as JSON">📤 Export</button>
       </div>
     </div>
     <div id="view-area">
@@ -2015,6 +2016,23 @@ async function importBaltraFromFile(input) {
     showToast('✗ Invalid JSON file');
     return;
   }
+
+  // Detect format: pm-tool export vs Baltra ADM schedule
+  if (data.format === 'pm-tool-v1') {
+    showToast('⏳ Importing project…');
+    try {
+      const result = await api.post('/api/import-project', data);
+      state.projects.push(result.project);
+      renderSidebar();
+      await selectProject(result.project_id);
+      showToast(`✓ Imported ${result.task_count} tasks into "${result.name}"`);
+    } catch(e) {
+      showToast('✗ Import failed: ' + (e.message || 'unknown error'));
+    }
+    return;
+  }
+
+  // Baltra ADM format
   if (!data.data && !data.ms && !data.modelDrops) {
     showToast('✗ File does not look like an ADM schedule JSON');
     return;
@@ -2028,6 +2046,26 @@ async function importBaltraFromFile(input) {
     showToast(`✓ Imported ${result.task_count} tasks into Baltra_auto`);
   } catch(e) {
     showToast('✗ Import failed: ' + (e.message || 'unknown error'));
+  }
+}
+
+// Export current project as a JSON file
+async function exportProject() {
+  if (!state.currentProject) { showToast('✗ No project selected'); return; }
+  try {
+    const data = await api.get(`/api/projects/${state.currentProject}/export`);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    const proj = state.projects.find(p => p.id === state.currentProject);
+    const name = (proj ? proj.name : 'project').replace(/[^a-z0-9_-]/gi, '_').toLowerCase();
+    a.href = url;
+    a.download = `${name}_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('✓ Exported');
+  } catch(e) {
+    showToast('✗ Export failed: ' + (e.message || 'unknown error'));
   }
 }
 

@@ -2436,7 +2436,91 @@ def import_baltra():
     project = dict(db.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone())
     task_count = db.execute("SELECT COUNT(*) FROM tasks WHERE project_id=?", (pid,)).fetchone()[0]
     return jsonify({'ok': True, 'project_id': pid, 'name': 'Baltra_auto', 'task_count': task_count, 'project': project}), 201
-    return jsonify({'ok': True})
+
+
+# ── Export / Generic Import ────────────────────────────────────────────────────
+@app.route('/api/projects/<int:pid>/export', methods=['GET'])
+def export_project(pid):
+    db = _get_db()
+    proj = db.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+    if not proj:
+        return jsonify({'error': 'Not found'}), 404
+    tasks = db.execute(
+        "SELECT * FROM tasks WHERE project_id=? ORDER BY sort_order", (pid,)
+    ).fetchall()
+    return jsonify({
+        'format': 'pm-tool-v1',
+        'project': {'name': proj['name'], 'color': proj['color']},
+        'tasks': [dict(t) for t in tasks]
+    })
+
+
+@app.route('/api/import-project', methods=['POST'])
+def import_project():
+    payload = request.get_json(force=True, silent=True)
+    if not payload or payload.get('format') != 'pm-tool-v1':
+        return jsonify({'error': 'Invalid or unrecognised format'}), 400
+
+    proj_data = payload.get('project', {})
+    tasks_data = payload.get('tasks', [])
+
+    db = _get_db()
+    cur = db.execute(
+        "INSERT INTO projects (name, color) VALUES (?,?)",
+        (proj_data.get('name', 'Imported Project'), proj_data.get('color', '#4A90E2'))
+    )
+    db.commit()
+    new_pid = cur.lastrowid
+
+    # Two-pass: insert tasks, remap old IDs → new IDs
+    old_to_new = {}  # old task id → new task id
+    # Sort so parents come before children (sort_order is reliable)
+    for t in sorted(tasks_data, key=lambda x: x.get('sort_order', 0)):
+        old_id    = t.get('id')
+        old_pid   = t.get('parent_id')
+        new_parent = old_to_new.get(old_pid) if old_pid else None
+
+        # Remap depends_on IDs
+        dep_str = t.get('depends_on', '') or ''
+        new_deps = []
+        for part in dep_str.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            m = _re.match(r'^(\d+)(FS|SS|FF|SF)?([+-]\d+[dw])?$', part, _re.I)
+            if m:
+                mapped = old_to_new.get(int(m.group(1)))
+                if mapped:
+                    new_deps.append(f"{mapped}{m.group(2) or 'FS'}{m.group(3) or ''}")
+            else:
+                new_deps.append(part)
+
+        max_order = db.execute(
+            "SELECT COALESCE(MAX(sort_order),0) FROM tasks WHERE project_id=?", (new_pid,)
+        ).fetchone()[0]
+
+        ins = db.execute(
+            """INSERT INTO tasks
+               (project_id, name, owner, status, priority, start_date, end_date,
+                pct_complete, depends_on, notes, sort_order, parent_id, duration,
+                color, is_milestone)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (new_pid,
+             t.get('name', ''), t.get('owner', ''), t.get('status', 'Not Started'),
+             t.get('priority', 'Normal'), t.get('start_date', ''), t.get('end_date', ''),
+             t.get('pct_complete', 0), ','.join(new_deps),
+             t.get('notes', ''), t.get('sort_order', max_order + 10),
+             new_parent, t.get('duration'),
+             t.get('color'), t.get('is_milestone', 0))
+        )
+        db.commit()
+        if old_id is not None:
+            old_to_new[old_id] = ins.lastrowid
+
+    project = dict(db.execute("SELECT * FROM projects WHERE id=?", (new_pid,)).fetchone())
+    task_count = db.execute("SELECT COUNT(*) FROM tasks WHERE project_id=?", (new_pid,)).fetchone()[0]
+    return jsonify({'ok': True, 'project_id': new_pid, 'name': project['name'],
+                    'task_count': task_count, 'project': project}), 201
 
 
 if __name__ == '__main__':
