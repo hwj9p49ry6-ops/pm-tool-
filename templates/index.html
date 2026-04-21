@@ -606,7 +606,6 @@
     <button class="btn btn-ghost" onclick="document.getElementById('import-baltra-input').click()" title="Import schedule JSON">📥 Import</button>
     <button class="btn btn-ghost" onclick="exportProject()" title="Export current project as JSON">📤 Export</button>
   </div>
-  <button class="btn btn-ghost" id="week-mode-btn" onclick="toggleWeekMode()" title="Toggle business days (5d/w) vs calendar days (7d/w)">Biz Days</button>
   <button class="btn btn-primary" onclick="openNewProjectModal()">+ New Project</button>
 </div>
 
@@ -749,31 +748,17 @@ const api = {
 const DAY_MS = 86400000;
 function dateToStr(d) { return d.toISOString().slice(0,10); }
 // Duration display helpers (storage = days, display = weeks)
-// bizDays: true = 5d/w, false = 7d/w (persisted in localStorage)
-let bizDays = localStorage.getItem('bizDays') === 'true';
-function toggleWeekMode() {
-  bizDays = !bizDays;
-  localStorage.setItem('bizDays', bizDays);
-  _updateWeekModeBtn();
-  if (state.activeProjectId) renderTasks();
-}
-function _updateWeekModeBtn() {
-  const btn = document.getElementById('week-mode-btn');
-  if (!btn) return;
-  btn.textContent = bizDays ? 'Biz Days ✓' : 'Biz Days';
-  btn.style.color = bizDays ? 'var(--accent)' : '';
-  btn.style.borderColor = bizDays ? 'var(--accent)' : '';
-}
+// Uses state.businessDaysMode: true = 5d/w, false = 7d/w
 function daysToWeeks(days) {
   if (days == null || days === '' || days < 0) return '';
   if (days === 0) return '0';
-  const dpw = bizDays ? 5 : 7;
+  const dpw = state.businessDaysMode ? 5 : 7;
   const rounded = Math.round((days / dpw) * 2) / 2;
   return String(rounded);
 }
 function weeksToDays(weeks) {
   const n = parseFloat(weeks);
-  return isNaN(n) ? null : Math.round(n * (bizDays ? 5 : 7));
+  return isNaN(n) ? null : Math.round(n * (state.businessDaysMode ? 5 : 7));
 }
 function strToDate(s) {
   if (!s) return null;
@@ -1021,7 +1006,6 @@ function taskAboveInDisplay(tid) {
 }
 // ═══════════════════════════════════════════════════════════
 async function init() {
-  _updateWeekModeBtn();
   await maybeCheckAuth();
   state.projects = await api.get('/api/projects');
   renderSidebar();
